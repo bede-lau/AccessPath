@@ -6,6 +6,9 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: "127.0.0.1",
+    port: 5173,
+    strictPort: true,
     proxy: {
       // The dev orchestrator (scripts/dev.mjs) sets ACCESSPATH_DEV_PROXY_PORT
       // to the fixed development-only companion port. This is NOT the product

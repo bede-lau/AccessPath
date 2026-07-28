@@ -1,10 +1,24 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Fastify, {
   LogController,
   type FastifyInstance,
   type FastifyRequest,
 } from "fastify";
-import { SCHEMA_VERSION } from "@accesspath/contracts";
+import {
+  ErrorResponseSchema,
+  SCHEMA_VERSION,
+  type ErrorCode,
+} from "@accesspath/contracts";
+
+import {
+  AuditNotFoundError,
+  AuditService,
+  AuditStateError,
+  type AuditRunner,
+} from "./audit-service";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const DEFAULT_ALLOWED_ORIGINS = [
@@ -12,6 +26,9 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:5173",
 ] as const;
 const serverTokens = new WeakMap<FastifyInstance, string>();
+const DEFAULT_REPOSITORY_ROOT = path.resolve(
+  fileURLToPath(new URL("../../..", import.meta.url)),
+);
 
 function isAllowedHost(host: string | undefined): boolean {
   return (
@@ -38,6 +55,10 @@ function tokenMatches(request: FastifyRequest, expected: string): boolean {
 export interface ServerConfig {
   launchToken?: string;
   allowedOrigins?: readonly string[];
+  artifactRoot?: string;
+  editableRepositoryRoot?: string;
+  demoAidAppPort?: number;
+  auditRunner?: AuditRunner;
 }
 
 export function createServer(config: ServerConfig = {}): FastifyInstance {
@@ -49,36 +70,125 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
     logger: { level: "info" },
     logController: new LogController({ disableRequestLogging: true }),
   });
+  const auditService = new AuditService({
+    artifactRoot: config.artifactRoot ?? path.join(os.homedir(), ".accesspath"),
+    editableRepositoryRoot:
+      config.editableRepositoryRoot ?? DEFAULT_REPOSITORY_ROOT,
+    runner: config.auditRunner,
+  });
   serverTokens.set(server, launchToken);
 
+  const errorResponse = (
+    code: ErrorCode,
+    message: string,
+    correlationId: string,
+    details?: Record<string, unknown>,
+  ) =>
+    ErrorResponseSchema.parse({
+      error: {
+        code,
+        message,
+        correlationId,
+        ...(details === undefined ? {} : { details }),
+      },
+    });
+
   server.addHook("onRequest", async (request, reply) => {
+    const correlationId = request.id;
+    reply.header("x-correlation-id", correlationId);
     if (!isAllowedHost(request.headers.host)) {
-      return reply.code(403).send({
-        error: {
-          code: "TARGET_POLICY_DENIED",
-          message: "The request host is not an approved loopback host.",
-        },
-      });
+      return reply
+        .code(403)
+        .send(
+          errorResponse(
+            "TARGET_POLICY_DENIED",
+            "The request host is not an approved loopback host.",
+            correlationId,
+          ),
+        );
     }
 
     const origin = request.headers.origin;
     if (origin !== undefined && !allowedOrigins.has(origin)) {
-      return reply.code(403).send({
-        error: {
-          code: "TARGET_POLICY_DENIED",
-          message: "The request origin is not approved for this launch.",
-        },
-      });
+      return reply
+        .code(403)
+        .send(
+          errorResponse(
+            "TARGET_POLICY_DENIED",
+            "The request origin is not approved for this launch.",
+            correlationId,
+          ),
+        );
     }
 
     if (!tokenMatches(request, launchToken)) {
-      return reply.code(401).send({
-        error: {
-          code: "QODER_PERMISSION_DENIED",
-          message: "A valid local launch token is required.",
-        },
-      });
+      return reply
+        .code(401)
+        .send(
+          errorResponse(
+            "QODER_PERMISSION_DENIED",
+            "A valid local launch token is required.",
+            correlationId,
+          ),
+        );
     }
+  });
+
+  server.setNotFoundHandler((request, reply) =>
+    reply
+      .code(404)
+      .send(
+        errorResponse(
+          "NOT_FOUND",
+          "The requested API resource was not found.",
+          request.id,
+        ),
+      ),
+  );
+
+  server.setErrorHandler((error: Error, request, reply) => {
+    if (reply.sent) {
+      return;
+    }
+    if (error instanceof AuditNotFoundError) {
+      return reply
+        .code(404)
+        .send(errorResponse("NOT_FOUND", error.message, request.id));
+    }
+    if (error instanceof AuditStateError) {
+      return reply
+        .code(409)
+        .send(
+          errorResponse("INVALID_STATE", error.message, request.id, {
+            currentState: error.currentState,
+          }),
+        );
+    }
+    if (
+      error.name === "ZodError" ||
+      error instanceof SyntaxError ||
+      error.message.includes("required")
+    ) {
+      return reply
+        .code(400)
+        .send(
+          errorResponse(
+            "INVALID_INPUT",
+            "The request body or parameters are invalid.",
+            request.id,
+          ),
+        );
+    }
+    request.log.error({ err: error }, "companion request failed");
+    return reply
+      .code(500)
+      .send(
+        errorResponse(
+          "INTERNAL",
+          "The companion could not complete the request.",
+          request.id,
+        ),
+      );
   });
 
   server.get("/api/health", async (_request, reply) => {
@@ -89,6 +199,180 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
       schemaVersion: SCHEMA_VERSION,
       timestamp: new Date().toISOString(),
     };
+  });
+
+  server.get("/api/config/public", async (_request, reply) => {
+    reply.header("cache-control", "no-store");
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      supportsAudit: true,
+      targetPolicies: ["public", "local-explicit"],
+      reportFormats: ["html", "markdown", "json"],
+      demoAidAppPort: config.demoAidAppPort ?? 4173,
+    };
+  });
+
+  server.post("/api/audits", async (request, reply) => {
+    const audit = await auditService.create(request.body);
+    return reply.code(201).send({ audit });
+  });
+
+  server.get<{ Params: { auditId: string } }>(
+    "/api/audits/:auditId",
+    async (request) => ({ audit: await auditService.get(request.params.auditId) }),
+  );
+
+  server.patch<{ Params: { auditId: string } }>(
+    "/api/audits/:auditId",
+    async (request) => ({
+      audit: await auditService.update(request.params.auditId, request.body),
+    }),
+  );
+
+  const idempotencyKey = (request: FastifyRequest): string | undefined => {
+    const value = request.headers["idempotency-key"];
+    if (Array.isArray(value)) {
+      return value[0];
+    }
+    return value;
+  };
+
+  server.post<{ Params: { auditId: string } }>(
+    "/api/audits/:auditId/start",
+    async (request, reply) =>
+      reply.code(202).send({
+        audit: await auditService.start(
+          request.params.auditId,
+          idempotencyKey(request),
+        ),
+      }),
+  );
+
+  server.post<{ Params: { auditId: string } }>(
+    "/api/audits/:auditId/pause",
+    async (request) => ({
+      audit: await auditService.pause(
+        request.params.auditId,
+        idempotencyKey(request),
+      ),
+    }),
+  );
+
+  server.post<{ Params: { auditId: string } }>(
+    "/api/audits/:auditId/resume",
+    async (request) => ({
+      audit: await auditService.resume(
+        request.params.auditId,
+        idempotencyKey(request),
+      ),
+    }),
+  );
+
+  server.post<{ Params: { auditId: string } }>(
+    "/api/audits/:auditId/cancel",
+    async (request) => ({
+      audit: await auditService.cancel(
+        request.params.auditId,
+        idempotencyKey(request),
+      ),
+    }),
+  );
+
+  server.get<{ Params: { auditId: string } }>(
+    "/api/audits/:auditId/bundle",
+    async (request, reply) => {
+      reply.header("cache-control", "no-store");
+      return auditService.bundle(request.params.auditId);
+    },
+  );
+
+  server.get<{
+    Params: { auditId: string };
+    Querystring: { format?: string };
+  }>("/api/audits/:auditId/report", async (request, reply) => {
+    const format = request.query.format;
+    if (format !== "html" && format !== "markdown" && format !== "json") {
+      return reply
+        .code(400)
+        .send(
+          errorResponse(
+            "INVALID_INPUT",
+            "format must be html, markdown, or json.",
+            request.id,
+          ),
+        );
+    }
+    const report = await auditService.report(
+      request.params.auditId,
+      format,
+    );
+    reply.header("cache-control", "no-store");
+    reply.header("content-type", report.contentType);
+    reply.header(
+      "content-disposition",
+      `attachment; filename="${report.filename}"`,
+    );
+    return reply.send(report.content);
+  });
+
+  server.get<{
+    Params: { sessionId: string };
+    Querystring: { after?: string };
+  }>("/api/sessions/:sessionId/events", async (request, reply) => {
+    await auditService.get(request.params.sessionId);
+    const cursor =
+      request.headers["last-event-id"] ?? request.query.after;
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-store",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+      "x-correlation-id": request.id,
+    });
+
+    let lastCursor = typeof cursor === "string" ? cursor : undefined;
+    let closed = false;
+    request.raw.once("close", () => {
+      closed = true;
+    });
+    while (!closed) {
+      const events = await auditService.replay(
+        request.params.sessionId,
+        lastCursor,
+      );
+      for (const event of events) {
+        reply.raw.write(
+          `id: ${event.eventId}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+        );
+        lastCursor = event.eventId;
+      }
+      const audit = await auditService.get(request.params.sessionId);
+      if (
+        ["completed", "blocked", "failed", "cancelled"].includes(audit.state)
+      ) {
+        reply.raw.end();
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  });
+
+  server.get<{
+    Params: { artifactId: string };
+    Querystring: { sessionId?: string };
+  }>("/api/artifacts/:artifactId", async (request, reply) => {
+    const artifact = await auditService.artifact(
+      request.params.artifactId,
+      request.query.sessionId,
+    );
+    reply.header("cache-control", "no-store");
+    reply.header("content-type", artifact.contentType);
+    reply.header(
+      "content-disposition",
+      `inline; filename="${artifact.filename}"`,
+    );
+    return reply.send(artifact.content);
   });
 
   return server;

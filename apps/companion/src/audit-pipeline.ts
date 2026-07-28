@@ -36,6 +36,10 @@ export interface PersistedAuditOptions {
   auditSessionId?: string;
   signal?: AbortSignal;
   engine?: EngineOptions;
+  manageSession?: boolean;
+  eventWriter?: (
+    event: AccessPathEvent<Record<string, unknown>>,
+  ) => Promise<AccessPathEvent<Record<string, unknown>> | undefined>;
 }
 
 export interface PersistedAuditResult {
@@ -88,6 +92,9 @@ export async function runPersistedAudit(
     | undefined;
 
   const persistSession = async (): Promise<void> => {
+    if (options.manageSession === false) {
+      return;
+    }
     await atomicWriteFile(
       layout.root,
       relative(layout.root, layout.sessionPath).replaceAll("\\", "/"),
@@ -132,7 +139,11 @@ export async function runPersistedAudit(
         deferredTerminal = event;
         return;
       }
-      await events.append(event);
+      if (options.eventWriter !== undefined) {
+        await options.eventWriter(event);
+      } else {
+        await events.append(event);
+      }
     },
   });
 
@@ -148,7 +159,11 @@ export async function runPersistedAudit(
   });
   await persistSession();
   if (deferredTerminal !== undefined) {
-    await events.append(deferredTerminal);
+    if (options.eventWriter !== undefined) {
+      await options.eventWriter(deferredTerminal);
+    } else {
+      await events.append(deferredTerminal);
+    }
   }
 
   return {

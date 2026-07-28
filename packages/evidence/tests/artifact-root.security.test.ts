@@ -1,13 +1,15 @@
+import { promises as fs } from "node:fs";
 import {
   lstat,
   mkdtemp,
   mkdir,
+  readFile,
   rm,
   symlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   atomicWriteFile,
@@ -102,5 +104,30 @@ describe("artifact root and safe path security", () => {
     expect((await lstat(layout.bundlePath)).isFile()).toBe(true);
     const entries = await (await import("node:fs/promises")).readdir(layout.auditDir);
     expect(entries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
+  });
+
+  it("retries transient file-lock interference during atomic replacement", async () => {
+    const root = await temporaryDirectory("accesspath-root-security-");
+    await createAuditDirectoryLayout(root, "audit-retry");
+    const originalRename = fs.rename.bind(fs);
+    const lockError = Object.assign(new Error("file is briefly locked"), {
+      code: "EPERM",
+    });
+    const rename = vi
+      .spyOn(fs, "rename")
+      .mockRejectedValueOnce(lockError)
+      .mockImplementation(originalRename);
+
+    try {
+      const target = await atomicWriteFile(
+        root,
+        "audits/audit-retry/session.json",
+        '{"state":"running"}\n',
+      );
+      expect(await readFile(target, "utf8")).toBe('{"state":"running"}\n');
+      expect(rename).toHaveBeenCalledTimes(2);
+    } finally {
+      rename.mockRestore();
+    }
   });
 });

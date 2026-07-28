@@ -89,6 +89,7 @@ export type AuditEngineOptions = {
   axeRunner?: AxeRunner;
   captureArtifact?: ArtifactCaptureCallback;
   onEvent?: (event: AuditEngineEvent) => Promise<void> | void;
+  beforeStep?: (instructionId: string) => Promise<void> | void;
   clock?: Clock;
   idFactory?: IdFactory;
   maxRedirects?: number;

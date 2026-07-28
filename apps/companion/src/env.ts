@@ -9,6 +9,7 @@ export interface CompanionConfig {
   artifactRoot: string;
   demoAidAppPort: number;
   nodeEnv: string;
+  launchToken?: string;
 }
 
 const REQUIRED_HOST = "127.0.0.1";
@@ -112,5 +113,6 @@ export function loadEnv(
     artifactRoot,
     demoAidAppPort,
     nodeEnv: env.NODE_ENV ?? "development",
+    launchToken: env.ACCESSPATH_LAUNCH_TOKEN,
   };
 }

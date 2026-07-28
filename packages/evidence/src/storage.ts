@@ -4,6 +4,7 @@ import {
   RelativePathSchema,
   type ArtifactRef,
 } from "@accesspath/contracts";
+import { randomUUID } from "node:crypto";
 import {
   createWriteStream,
   promises as fs,
@@ -144,7 +145,7 @@ export async function atomicWriteFile(
 ): Promise<string> {
   const target = resolveSafeRelativePath(root, relativePath);
   await assertNoSymlinkSegments(root, dirname(target));
-  const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
+  const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
   const stream = createWriteStream(temporary, {
     flags: "wx",
     mode: 0o600,
@@ -152,7 +153,23 @@ export async function atomicWriteFile(
   try {
     stream.end(data);
     await finished(stream);
-    await fs.rename(temporary, target);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await fs.rename(temporary, target);
+        break;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (
+          attempt >= 5 ||
+          (code !== "EACCES" && code !== "EBUSY" && code !== "EPERM")
+        ) {
+          throw error;
+        }
+        await new Promise((resolveDelay) =>
+          setTimeout(resolveDelay, 10 * 2 ** attempt),
+        );
+      }
+    }
     return target;
   } catch (error) {
     stream.destroy();

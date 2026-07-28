@@ -163,6 +163,7 @@ function axeFindings(
       ruleId: violation.id,
       observation:
         node.failureSummary ?? violation.description ?? "axe reported a violation.",
+      deterministicChecks: [`axe rule ${violation.id} reported this node.`],
       reproduction: [`Run axe at task step ${stepId}.`],
       evidenceIds: [evidenceId],
       manualReview: [],
@@ -372,6 +373,8 @@ export async function runAudit(
     }
 
     for (const [index, instruction] of task.expectedSteps.entries()) {
+      throwIfAborted();
+      await options.beforeStep?.(instruction.id);
       throwIfAborted();
       const stepStarted = clock.now().toISOString();
       const evidence: ArtifactRef[] = [];

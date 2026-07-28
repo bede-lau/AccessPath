@@ -31,6 +31,16 @@ function findingMarkdown(finding: Finding): string {
     "",
     `**Observation:** ${finding.observation}`,
   ];
+  if (
+    finding.deterministicChecks !== undefined &&
+    finding.deterministicChecks.length > 0
+  ) {
+    lines.push(
+      "",
+      "**Deterministic checks:**",
+      ...finding.deterministicChecks.map((check) => `- ${check}`),
+    );
+  }
   if (finding.diagnosis !== undefined) {
     lines.push("", `**Inferred diagnosis:** ${finding.diagnosis}`);
   }
@@ -131,6 +141,7 @@ export function renderHtmlReport(input: AuditBundle): string {
 <dt>State</dt><dd>${escapeHtml(finding.state)}</dd>
 </dl>
 <p><strong>Observation:</strong> ${escapeHtml(finding.observation)}</p>
+${finding.deterministicChecks === undefined || finding.deterministicChecks.length === 0 ? "" : `<p><strong>Deterministic checks:</strong></p><ul>${finding.deterministicChecks.map((check) => `<li>${escapeHtml(check)}</li>`).join("")}</ul>`}
 ${finding.diagnosis === undefined ? "" : `<p><strong>Inferred diagnosis:</strong> ${escapeHtml(finding.diagnosis)}</p>`}
 <p><strong>Evidence artifacts:</strong> ${finding.evidenceIds.length === 0 ? "None" : finding.evidenceIds.map((id) => `<code>${escapeHtml(id)}</code>`).join(", ")}</p>
 </article>`,

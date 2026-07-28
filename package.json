@@ -15,9 +15,9 @@
     "lint": "node scripts/lint.mjs",
     "typecheck": "node scripts/typecheck.mjs",
     "test": "vitest run",
-    "test:e2e": "node scripts/not-implemented.mjs test:e2e",
+    "test:e2e": "playwright test --config apps/console/playwright.config.ts",
     "test:security": "vitest run --config vitest.security.config.ts",
-    "test:a11y": "node scripts/not-implemented.mjs test:a11y",
+    "test:a11y": "playwright test --config apps/console/playwright.config.ts --grep @a11y",
     "demo:reset": "node scripts/demo-reset.mjs",
     "demo:verify": "node scripts/not-implemented.mjs demo:verify"
   },

@@ -20,6 +20,13 @@ const fixtureDefinitions: Array<
     wcagRefs: ["2.1.1", "4.1.2"],
     observation:
       "The reviewed radio action has no role/name target and the custom options expose no keyboard semantics.",
+    deterministicChecks: [
+      "No keyboard-operable radio role and accessible name were available.",
+      "The custom choice exposed no complete radio keyboard semantics.",
+      "A recorded pointer-only test assist was required to continue.",
+    ],
+    diagnosis:
+      "The custom options are non-interactive elements with pointer handlers only.",
     reproduction: [
       "Load the eligibility step.",
       "Attempt the reviewed radio action using keyboard-operable semantics.",
@@ -49,6 +56,10 @@ const fixtureDefinitions: Array<
     wcagRefs: ["1.3.5"],
     observation:
       "The telephone input has no autocomplete attribute in the observed browser DOM.",
+    deterministicChecks: [
+      "The Phone number input returned no autocomplete attribute.",
+    ],
+    diagnosis: "The telephone input omits autocomplete=\"tel\".",
     reproduction: ["Inspect the Phone number input on the applicant profile step."],
     remediationGuidance: "Add autocomplete=\"tel\" to the telephone input.",
     manualReview: [],
@@ -69,6 +80,12 @@ const fixtureDefinitions: Array<
     wcagRefs: ["1.3.1", "3.3.2"],
     observation:
       "The related checkboxes are not contained in a fieldset or named group.",
+    deterministicChecks: [
+      "No fieldset and legend contained the assistance choices.",
+      "No named role=group contained the assistance choices.",
+    ],
+    diagnosis:
+      "The related checkboxes are presented in an unlabeled container.",
     reproduction: ["Navigate between the assistance choices and inspect group context."],
     remediationGuidance:
       "Wrap the related choices in a fieldset with a concise legend.",
@@ -92,6 +109,13 @@ const fixtureDefinitions: Array<
     wcagRefs: ["2.4.3", "3.3.1", "3.3.3"],
     observation:
       "The error summary became visible without focus moving to it and without a field link.",
+    deterministicChecks: [
+      "The error summary became visible.",
+      "The summary contained no link to the invalid field.",
+      "Focus remained on the submit button.",
+    ],
+    diagnosis:
+      "The submit handler reveals static summary text without focus management or field links.",
     reproduction: [
       "Leave the fictional-data confirmation unchecked.",
       "Activate Submit test application.",
@@ -119,6 +143,12 @@ const fixtureDefinitions: Array<
     wcagRefs: ["4.1.3"],
     observation:
       "The visible submission confirmation has neither status semantics nor a live region.",
+    deterministicChecks: [
+      "The submission confirmation was visible.",
+      "The confirmation had neither role=status nor aria-live.",
+    ],
+    diagnosis:
+      "The newly revealed confirmation has no status or live-region semantics.",
     reproduction: [
       "Submit the fictional application.",
       "Wait for the confirmation without moving focus.",

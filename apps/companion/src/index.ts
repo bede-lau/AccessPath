@@ -19,7 +19,13 @@ export {
 
 async function main(): Promise<void> {
   const config = loadEnv();
-  const server = await start({ host: config.host, port: config.port });
+  const server = await start({
+    host: config.host,
+    port: config.port,
+    artifactRoot: config.artifactRoot,
+    demoAidAppPort: config.demoAidAppPort,
+    launchToken: config.launchToken,
+  });
 
   let shuttingDown = false;
   const shutdown = async (): Promise<void> => {

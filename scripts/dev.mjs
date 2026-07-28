@@ -5,6 +5,7 @@
 // Child processes use direct Node entry points and a minimal environment.
 
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,8 +21,11 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 // This is a development-only convenience; the product security/runtime default
 // remains ACCESSPATH_PORT=0 (OS-selected port). Do NOT promote this fixed port
 // to a runtime default.
-const DEV_COMPANION_PORT = "4801";
-const DEV_DEMO_AID_APP_PORT = "4173";
+const DEV_COMPANION_PORT =
+  process.env.ACCESSPATH_DEV_COMPANION_PORT ?? "4801";
+const DEV_DEMO_AID_APP_PORT =
+  process.env.ACCESSPATH_DEV_DEMO_AID_APP_PORT ?? "4173";
+const DEV_LAUNCH_TOKEN = randomBytes(32).toString("base64url");
 
 // Fixed constant commands only — one consistent npm-based approach for all
 // three children. Each child runs its own workspace "dev" script from the
@@ -77,7 +81,11 @@ const CHILDREN_SPECS = [
   {
     name: "companion",
     cwd: path.join(repoRoot, "apps", "companion"),
-    env: { ACCESSPATH_PORT: DEV_COMPANION_PORT },
+    env: {
+      ACCESSPATH_PORT: DEV_COMPANION_PORT,
+      ACCESSPATH_LAUNCH_TOKEN: DEV_LAUNCH_TOKEN,
+      DEMO_AID_APP_PORT: DEV_DEMO_AID_APP_PORT,
+    },
     forwardEnv: [
       "ACCESSPATH_ARTIFACT_ROOT",
       "ACCESSPATH_HOST",
@@ -93,7 +101,10 @@ const CHILDREN_SPECS = [
   {
     name: "console",
     cwd: path.join(repoRoot, "apps", "console"),
-    env: { ACCESSPATH_DEV_PROXY_PORT: DEV_COMPANION_PORT },
+    env: {
+      ACCESSPATH_DEV_PROXY_PORT: DEV_COMPANION_PORT,
+      VITE_ACCESSPATH_LAUNCH_TOKEN: DEV_LAUNCH_TOKEN,
+    },
     forwardEnv: [],
   },
 ];

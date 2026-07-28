@@ -26,8 +26,12 @@ describe("P03 emergency-aid fixture integration", () => {
     const task = JSON.parse(
       JSON.stringify({ ...fixtureTaskContract, startUrl }),
     ) as TaskContract;
+    const visitedSteps: string[] = [];
     const result = await runAudit(task, {
       dnsResolver: async () => [{ address: "127.0.0.1", family: 4 }],
+      beforeStep: (instructionId) => {
+        visitedSteps.push(instructionId);
+      },
     });
 
     expect(result.bundle.outcome).toBe("blocked");
@@ -56,6 +60,9 @@ describe("P03 emergency-aid fixture integration", () => {
       true,
     );
     expect(result.bundle.environment.axeVersion).toBe("4.12.1");
+    expect(visitedSteps).toEqual(
+      task.expectedSteps.map((instruction) => instruction.id),
+    );
     expect(() => AuditBundleSchema.parse(result.bundle)).not.toThrow();
   }, 60_000);
 });

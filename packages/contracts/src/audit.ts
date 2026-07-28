@@ -80,6 +80,7 @@ export const FindingSchema = z.object({
   wcagRefs: z.array(z.string()),
   ruleId: z.string().optional(),
   observation: z.string(),
+  deterministicChecks: z.array(z.string()).optional(),
   diagnosis: z.string().optional(),
   reproduction: z.array(z.string()),
   remediationGuidance: z.string().optional(),
