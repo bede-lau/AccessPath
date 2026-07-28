@@ -18,6 +18,7 @@
     "test:e2e": "playwright test --config apps/console/playwright.config.ts",
     "test:security": "vitest run --config vitest.security.config.ts",
     "test:a11y": "playwright test --config apps/console/playwright.config.ts --grep @a11y",
+    "test:qoder:live": "node --import tsx scripts/qoder-live-smoke.ts",
     "demo:reset": "node scripts/demo-reset.mjs",
     "demo:verify": "node scripts/not-implemented.mjs demo:verify"
   },

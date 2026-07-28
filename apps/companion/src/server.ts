@@ -12,6 +12,8 @@ import {
   SCHEMA_VERSION,
   type ErrorCode,
 } from "@accesspath/contracts";
+import { GitWorkspaceError } from "@accesspath/git-workspace";
+import type { QoderAdapter } from "@accesspath/qoder-runner";
 
 import {
   AuditNotFoundError,
@@ -19,6 +21,16 @@ import {
   AuditStateError,
   type AuditRunner,
 } from "./audit-service";
+import { qoderAuthAvailability } from "./qoder-auth";
+import { ProcessSupervisorError } from "./process-supervisor";
+import {
+  RepairApprovalError,
+  RepairNotFoundError,
+  RepairService,
+  RepairStateError,
+  repositoryValidationResponse,
+  type RepairCommandRunner,
+} from "./repair-service";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const DEFAULT_ALLOWED_ORIGINS = [
@@ -59,6 +71,8 @@ export interface ServerConfig {
   editableRepositoryRoot?: string;
   demoAidAppPort?: number;
   auditRunner?: AuditRunner;
+  qoderAdapter?: QoderAdapter;
+  repairCommandRunner?: RepairCommandRunner;
 }
 
 export function createServer(config: ServerConfig = {}): FastifyInstance {
@@ -76,7 +90,18 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
       config.editableRepositoryRoot ?? DEFAULT_REPOSITORY_ROOT,
     runner: config.auditRunner,
   });
+  const repairService = new RepairService({
+    artifactRoot: config.artifactRoot ?? path.join(os.homedir(), ".accesspath"),
+    commandRunner: config.repairCommandRunner,
+    editableRepositoryRoot:
+      config.editableRepositoryRoot ?? DEFAULT_REPOSITORY_ROOT,
+    qoderAdapter: config.qoderAdapter,
+  });
   serverTokens.set(server, launchToken);
+
+  server.addHook("onClose", async () => {
+    await repairService.shutdown();
+  });
 
   const errorResponse = (
     code: ErrorCode,
@@ -155,13 +180,79 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
         .code(404)
         .send(errorResponse("NOT_FOUND", error.message, request.id));
     }
-    if (error instanceof AuditStateError) {
+    if (
+      error instanceof AuditStateError ||
+      error instanceof RepairStateError
+    ) {
       return reply
         .code(409)
         .send(
           errorResponse("INVALID_STATE", error.message, request.id, {
             currentState: error.currentState,
           }),
+        );
+    }
+    if (error instanceof RepairNotFoundError) {
+      return reply
+        .code(404)
+        .send(errorResponse("NOT_FOUND", error.message, request.id));
+    }
+    if (error instanceof RepairApprovalError) {
+      return reply
+        .code(409)
+        .send(errorResponse("CONFLICT", error.message, request.id));
+    }
+    if (error instanceof GitWorkspaceError) {
+      const code: ErrorCode =
+        error.code === "REPOSITORY_DIRTY"
+          ? "REPOSITORY_DIRTY"
+          : error.code === "PATH_ESCAPE"
+            ? "PATH_ESCAPE"
+            : error.code === "CONFLICT"
+              ? "CONFLICT"
+              : "REPOSITORY_INVALID";
+      return reply
+        .code(code === "REPOSITORY_DIRTY" || code === "CONFLICT" ? 409 : 400)
+        .send(
+          errorResponse(
+            code,
+            code === "REPOSITORY_DIRTY"
+              ? "The repository base checkout must be clean."
+              : code === "PATH_ESCAPE"
+                ? "The requested path is outside the repair workspace."
+                : "The repository cannot be used for this repair.",
+            request.id,
+          ),
+        );
+    }
+    if (error instanceof ProcessSupervisorError) {
+      const code: ErrorCode =
+        error.code === "PATH_ESCAPE" ? "PATH_ESCAPE" : "COMMAND_DENIED";
+      return reply
+        .code(400)
+        .send(
+          errorResponse(
+            code,
+            code === "PATH_ESCAPE"
+              ? "The command working directory escapes the repair workspace."
+              : "The command is not allowed by the repair policy.",
+            request.id,
+          ),
+        );
+    }
+    if (
+      error.message.includes("QODER_PERSONAL_ACCESS_TOKEN") ||
+      error.message.includes("auth_not_configured") ||
+      error.message.includes("authentication")
+    ) {
+      return reply
+        .code(409)
+        .send(
+          errorResponse(
+            "QODER_AUTH_REQUIRED",
+            "Qoder authentication is required for the live adapter.",
+            request.id,
+          ),
         );
     }
     if (
@@ -206,9 +297,42 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
     return {
       schemaVersion: SCHEMA_VERSION,
       supportsAudit: true,
+      supportsRepair: true,
       targetPolicies: ["public", "local-explicit"],
       reportFormats: ["html", "markdown", "json"],
       demoAidAppPort: config.demoAidAppPort ?? 4173,
+    };
+  });
+
+  server.post("/api/auth/qoder/validate", async (_request, reply) => {
+    reply.header("cache-control", "no-store");
+    const authentication = await qoderAuthAvailability();
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      ...authentication,
+      nextAction: authentication.available
+        ? "Qoder authentication is available."
+        : "Set QODER_PERSONAL_ACCESS_TOKEN or sign in with qodercli.",
+    };
+  });
+
+  server.post("/api/repositories/validate", async (request, reply) => {
+    const body = request.body as { repositoryPath?: unknown };
+    if (typeof body?.repositoryPath !== "string") {
+      return reply
+        .code(400)
+        .send(
+          errorResponse(
+            "INVALID_INPUT",
+            "repositoryPath is required.",
+            request.id,
+          ),
+        );
+    }
+    return {
+      repository: repositoryValidationResponse(
+        await repairService.validateRepository(body.repositoryPath),
+      ),
     };
   });
 
@@ -315,11 +439,249 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
     return reply.send(report.content);
   });
 
+  server.post("/api/repairs", async (request, reply) =>
+    reply.code(201).send({
+      repair: await repairService.create(request.body),
+    }),
+  );
+
+  server.get<{ Params: { repairId: string } }>(
+    "/api/repairs/:repairId",
+    async (request) => ({
+      repair: await repairService.get(request.params.repairId),
+      manifest: await repairService.manifest(request.params.repairId),
+      plan: await repairService.plan(request.params.repairId),
+      approvals: await repairService.listApprovals(request.params.repairId),
+      tests: await repairService.tests(request.params.repairId),
+      baseIntegrity: await repairService.baseIntegrity(
+        request.params.repairId,
+      ),
+    }),
+  );
+
+  server.post<{ Params: { repairId: string } }>(
+    "/api/repairs/:repairId/prepare",
+    async (request, reply) =>
+      reply.code(202).send({
+        repair: await repairService.prepare(request.params.repairId),
+      }),
+  );
+
+  server.post<{ Params: { repairId: string } }>(
+    "/api/repairs/:repairId/diagnose",
+    async (request, reply) =>
+      reply.code(202).send({
+        repair: await repairService.diagnose(request.params.repairId),
+      }),
+  );
+
+  server.post<{ Params: { repairId: string } }>(
+    "/api/repairs/:repairId/start",
+    async (request, reply) =>
+      reply.code(202).send({
+        repair: await repairService.startRepair(
+          request.params.repairId,
+          idempotencyKey(request),
+        ),
+      }),
+  );
+
+  server.post<{ Params: { repairId: string } }>(
+    "/api/repairs/:repairId/pause",
+    async (request) => ({
+      repair: await repairService.interrupt(request.params.repairId),
+    }),
+  );
+
+  server.post<{ Params: { repairId: string } }>(
+    "/api/repairs/:repairId/resume",
+    async (request, reply) =>
+      reply.code(202).send({
+        repair: await repairService.resume(request.params.repairId),
+      }),
+  );
+
+  server.post<{ Params: { repairId: string } }>(
+    "/api/repairs/:repairId/cancel",
+    async (request) => ({
+      repair: await repairService.cancel(
+        request.params.repairId,
+        idempotencyKey(request),
+      ),
+    }),
+  );
+
+  server.get<{ Params: { repairId: string } }>(
+    "/api/repairs/:repairId/diff",
+    async (request, reply) => {
+      reply.header("cache-control", "no-store");
+      return {
+        diff: await repairService.diff(request.params.repairId),
+      };
+    },
+  );
+
+  server.post<{ Params: { repairId: string } }>(
+    "/api/repairs/:repairId/verify",
+    async (request, reply) =>
+      reply.code(202).send({
+        repair: await repairService.verify(
+          request.params.repairId,
+          idempotencyKey(request),
+        ),
+      }),
+  );
+
+  server.get<{ Params: { repairId: string } }>(
+    "/api/repairs/:repairId/approvals",
+    async (request) => ({
+      approvals: await repairService.listApprovals(request.params.repairId),
+    }),
+  );
+
+  server.post<{
+    Params: { repairId: string; approvalId: string };
+  }>(
+    "/api/repairs/:repairId/approvals/:approvalId",
+    async (request) => ({
+      approval: await repairService.decideApproval(
+        request.params.repairId,
+        request.params.approvalId,
+        request.body,
+        idempotencyKey(request),
+      ),
+    }),
+  );
+
+  server.post<{ Params: { repairId: string } }>(
+    "/api/repairs/:repairId/rewind/preview",
+    async (request) =>
+      repairService.rewindPreview(
+        request.params.repairId,
+        idempotencyKey(request),
+      ),
+  );
+
+  server.post<{ Params: { repairId: string } }>(
+    "/api/repairs/:repairId/rewind",
+    async (request, reply) => {
+      const body = request.body as { approvalId?: unknown };
+      if (typeof body?.approvalId !== "string") {
+        return reply
+          .code(400)
+          .send(
+            errorResponse(
+              "INVALID_INPUT",
+              "approvalId is required.",
+              request.id,
+            ),
+          );
+      }
+      return {
+        diff: await repairService.applyRewind(
+          request.params.repairId,
+          body.approvalId,
+          idempotencyKey(request),
+        ),
+      };
+    },
+  );
+
+  server.post<{ Params: { approvalId: string } }>(
+    "/api/approvals/:approvalId/decision",
+    async (request) => {
+      const repairId = await repairService.repairIdForApproval(
+        request.params.approvalId,
+      );
+      return {
+        approval: await repairService.decideApproval(
+          repairId,
+          request.params.approvalId,
+          request.body,
+          idempotencyKey(request),
+        ),
+      };
+    },
+  );
+
+  server.post<{ Params: { checkpointId: string } }>(
+    "/api/checkpoints/:checkpointId/rewind-preview",
+    async (request) =>
+      repairService.rewindPreviewForCheckpoint(
+        request.params.checkpointId,
+        idempotencyKey(request),
+      ),
+  );
+
+  server.post<{ Params: { checkpointId: string } }>(
+    "/api/checkpoints/:checkpointId/rewind",
+    async (request, reply) => {
+      const body = request.body as { approvalId?: unknown };
+      if (typeof body?.approvalId !== "string") {
+        return reply
+          .code(400)
+          .send(
+            errorResponse(
+              "INVALID_INPUT",
+              "approvalId is required.",
+              request.id,
+            ),
+          );
+      }
+      return {
+        diff: await repairService.applyRewindForCheckpoint(
+          request.params.checkpointId,
+          body.approvalId,
+          idempotencyKey(request),
+        ),
+      };
+    },
+  );
+
+  server.get<{
+    Params: { repairId: string };
+    Querystring: { format?: string };
+  }>("/api/repairs/:repairId/report", async (request, reply) => {
+    const format = request.query.format;
+    if (format !== "markdown" && format !== "json") {
+      return reply
+        .code(400)
+        .send(
+          errorResponse(
+            "INVALID_INPUT",
+            "format must be markdown or json.",
+            request.id,
+          ),
+        );
+    }
+    const report = await repairService.report(
+      request.params.repairId,
+      format,
+    );
+    reply.header("cache-control", "no-store");
+    reply.header("content-type", report.contentType);
+    reply.header(
+      "content-disposition",
+      `attachment; filename="${report.filename}"`,
+    );
+    return reply.send(report.content);
+  });
+
   server.get<{
     Params: { sessionId: string };
     Querystring: { after?: string };
   }>("/api/sessions/:sessionId/events", async (request, reply) => {
-    await auditService.get(request.params.sessionId);
+    let sessionType: "audit" | "repair";
+    try {
+      await auditService.get(request.params.sessionId);
+      sessionType = "audit";
+    } catch (error) {
+      if (!(error instanceof AuditNotFoundError)) {
+        throw error;
+      }
+      await repairService.get(request.params.sessionId);
+      sessionType = "repair";
+    }
     const cursor =
       request.headers["last-event-id"] ?? request.query.after;
     reply.hijack();
@@ -337,19 +699,28 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
       closed = true;
     });
     while (!closed) {
-      const events = await auditService.replay(
-        request.params.sessionId,
-        lastCursor,
-      );
+      const events =
+        sessionType === "audit"
+          ? await auditService.replay(request.params.sessionId, lastCursor)
+          : await repairService.replay(request.params.sessionId, lastCursor);
       for (const event of events) {
         reply.raw.write(
           `id: ${event.eventId}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
         );
         lastCursor = event.eventId;
       }
-      const audit = await auditService.get(request.params.sessionId);
+      const state =
+        sessionType === "audit"
+          ? (await auditService.get(request.params.sessionId)).state
+          : (await repairService.get(request.params.sessionId)).state;
       if (
-        ["completed", "blocked", "failed", "cancelled"].includes(audit.state)
+        [
+          "completed",
+          "blocked",
+          "failed",
+          "cancelled",
+          "rejected",
+        ].includes(state)
       ) {
         reply.raw.end();
         break;

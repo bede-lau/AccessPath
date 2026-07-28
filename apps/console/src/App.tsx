@@ -5,6 +5,7 @@ import type {
   AuditSession,
   AuditState,
   Finding,
+  RepairSession,
   TaskContract,
   TaskStepResult,
 } from "@accesspath/contracts";
@@ -68,8 +69,9 @@ import {
   buildBarrierPresentation,
 } from "./barrier-model";
 import { createReviewedAuditTask } from "./reviewed-task";
+import { RepairWorkspace } from "./RepairWorkspace";
 
-type View = "setup" | "live" | "barrier-map";
+type View = "setup" | "live" | "barrier-map" | "repair";
 type ConnectionState =
   | "idle"
   | "connecting"
@@ -111,6 +113,9 @@ function navigate(path: string): void {
 }
 
 function inferView(pathname: string): View {
+  if (/^\/repairs\/[^/]+/.test(pathname)) {
+    return "repair";
+  }
   if (pathname.includes("/barrier-map")) {
     return "barrier-map";
   }
@@ -122,6 +127,10 @@ function inferView(pathname: string): View {
 
 function auditIdFromPath(pathname: string): string | undefined {
   return pathname.match(/^\/audits\/([^/]+)\//)?.[1];
+}
+
+function repairIdFromPath(pathname: string): string | undefined {
+  return pathname.match(/^\/repairs\/([^/]+)/)?.[1];
 }
 
 function IconButton({
@@ -177,9 +186,11 @@ function StatusBadge({
 function AppRail({
   view,
   auditId,
+  repairId,
 }: {
   view: View;
   auditId?: string;
+  repairId?: string;
 }) {
   const items = [
     { label: "Projects", icon: Archive, enabled: true, view: "setup" as View },
@@ -190,7 +201,12 @@ function AppRail({
       enabled: auditId !== undefined,
       view: "barrier-map" as View,
     },
-    { label: "Repairs", icon: ClipboardCheck, enabled: false },
+    {
+      label: "Repairs",
+      icon: ClipboardCheck,
+      enabled: repairId !== undefined,
+      view: "repair" as View,
+    },
     { label: "Evidence", icon: FileText, enabled: auditId !== undefined },
   ];
   return (
@@ -219,6 +235,8 @@ function AppRail({
                   (item.view === "barrier-map" || item.label === "Evidence")
                 ) {
                   navigate(`/audits/${auditId}/barrier-map`);
+                } else if (repairId !== undefined && item.view === "repair") {
+                  navigate(`/repairs/${repairId}`);
                 }
               }}
             >
@@ -238,17 +256,25 @@ function AppRail({
 
 function Header({
   session,
+  repair,
   connection,
 }: {
   session?: AuditSession;
+  repair?: RepairSession;
   connection: ConnectionState;
 }) {
   return (
     <header className="topbar">
       <div>
-        <p className="eyebrow">Emergency aid demo project</p>
+        <p className="eyebrow">
+          {repair === undefined
+            ? "Emergency aid demo project"
+            : "Isolated local repair plane"}
+        </p>
         <p className="topbar-title">
-          {session?.task.title ?? "New critical-path audit"}
+          {repair === undefined
+            ? session?.task.title ?? "New critical-path audit"
+            : `${repair.repository.repositoryDisplayName} / ${repair.branch}`}
         </p>
       </div>
       <div className="topbar-status">
@@ -256,6 +282,12 @@ function Header({
           <StatusBadge
             state={session.state}
             label={statusCopy(session.state)}
+          />
+        )}
+        {repair !== undefined && (
+          <StatusBadge
+            state={repair.state}
+            label={repair.state.replaceAll("-", " ")}
           />
         )}
         <span
@@ -1180,6 +1212,7 @@ function BarrierMapView({
 export function App() {
   const [view, setView] = useState<View>(() => inferView(window.location.pathname));
   const [session, setSession] = useState<AuditSession>();
+  const [repairSession, setRepairSession] = useState<RepairSession>();
   const [bundle, setBundle] = useState<AuditBundle>();
   const [events, setEvents] = useState<AccessPathEvent<Record<string, unknown>>[]>([]);
   const [connection, setConnection] = useState<ConnectionState>("idle");
@@ -1374,9 +1407,17 @@ export function App() {
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to main content</a>
-      <AppRail view={view} auditId={session?.id} />
+      <AppRail
+        view={view}
+        auditId={session?.id}
+        repairId={repairIdFromPath(window.location.pathname)}
+      />
       <div className="app-body">
-        <Header session={session} connection={connection} />
+        <Header
+          session={session}
+          repair={repairSession}
+          connection={connection}
+        />
         {error !== null && view !== "setup" && (
           <div className="global-alert" role="alert">
             <TriangleAlert aria-hidden="true" />
@@ -1430,9 +1471,18 @@ export function App() {
             </button>
           </main>
         )}
+        {view === "repair" &&
+          repairIdFromPath(window.location.pathname) !== undefined && (
+            <RepairWorkspace
+              repairId={repairIdFromPath(window.location.pathname)!}
+              onRepairChange={setRepairSession}
+            />
+          )}
       </div>
       <div className="visually-hidden" aria-live="polite" aria-atomic="true">
-        {session === undefined ? "" : `Audit ${statusCopy(session.state)}.`}
+        {view === "repair" || session === undefined
+          ? ""
+          : `Audit ${statusCopy(session.state)}.`}
       </div>
     </div>
   );

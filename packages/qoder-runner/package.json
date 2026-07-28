@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@accesspath/contracts": "0.1.0"
+    "@accesspath/contracts": "0.1.0",
+    "@qoder-ai/qoder-agent-sdk": "1.0.16"
   }
 }

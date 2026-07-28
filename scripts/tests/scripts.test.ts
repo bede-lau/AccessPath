@@ -28,12 +28,13 @@ const EXPECTED_SCRIPTS = [
   "test:e2e",
   "test:security",
   "test:a11y",
+  "test:qoder:live",
   "demo:reset",
   "demo:verify",
 ];
 
 describe("root package.json scripts", () => {
-  it("declares exactly the nine Gate A script names", () => {
+  it("declares the Gate A scripts plus the explicit live Qoder gate", () => {
     const manifest = JSON.parse(
       readFileSync(path.join(repoRoot, "package.json"), "utf8"),
     ) as { scripts?: Record<string, string> };

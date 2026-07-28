@@ -36,6 +36,20 @@ const api = vi.hoisted(() => ({
   downloadReport: vi.fn(),
   fetchArtifactUrl: vi.fn(),
   streamAuditEvents: vi.fn(),
+  streamSessionEvents: vi.fn(),
+  getRepair: vi.fn(),
+  getRepairDiff: vi.fn(),
+  prepareRepair: vi.fn(),
+  diagnoseRepair: vi.fn(),
+  startRepair: vi.fn(),
+  pauseRepair: vi.fn(),
+  resumeRepair: vi.fn(),
+  cancelRepair: vi.fn(),
+  verifyRepair: vi.fn(),
+  decideRepairApproval: vi.fn(),
+  previewRepairRewind: vi.fn(),
+  applyRepairRewind: vi.fn(),
+  downloadRepairReport: vi.fn(),
 }));
 
 vi.mock("../src/api", () => ({
@@ -108,6 +122,7 @@ describe("P05 console surfaces", () => {
     api.getPublicConfig.mockResolvedValue({
       schemaVersion: "1.0.0",
       supportsAudit: true,
+      supportsRepair: true,
       targetPolicies: ["public", "local-explicit"],
       reportFormats: ["html", "markdown", "json"],
       demoAidAppPort: 4173,

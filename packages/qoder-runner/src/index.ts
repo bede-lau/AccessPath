@@ -1,11 +1,34 @@
-// @accesspath/qoder-runner — Qoder CLI repair session orchestration.
-// Stub only; implementation lands in P06.
-
-import type { RepairManifest } from "@accesspath/contracts";
-
 export const PACKAGE_NAME = "@accesspath/qoder-runner" as const;
 
-export function startRepairSession(manifest: RepairManifest): Promise<never> {
-  void manifest;
-  throw new Error("Not implemented until P06");
-}
+export {
+  DeterministicMockQoderAdapter,
+  type DeterministicMockEdit,
+  type DeterministicMockQoderOptions,
+} from "./mock-adapter";
+export {
+  createToolPolicy,
+  matchesAllowedPath,
+  resolveWorktreePath,
+  type ToolPolicyOptions,
+} from "./policy";
+export { diagnosisPrompt, repairPrompt } from "./prompts";
+export {
+  OfficialQoderAdapter,
+  qoderChildEnvironment,
+  resolveQoderAuth,
+} from "./sdk-adapter";
+export { redactRunnerText, startRepairSession } from "./runner";
+export type {
+  PersistedRunnerEvent,
+  QoderAdapter,
+  QoderAdapterSession,
+  QoderAdapterStartOptions,
+  QoderAuthStrategy,
+  QoderQuery,
+  QoderSdkMessage,
+  RepairAgentMode,
+  RepairSessionHandle,
+  RepairSessionOptions,
+  RepairTurnResult,
+  RunnerEvent,
+} from "./types";
