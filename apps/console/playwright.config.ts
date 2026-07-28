@@ -4,6 +4,7 @@ const baseURL = "http://127.0.0.1:5173";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  globalTeardown: "../../scripts/e2e-global-teardown.ts",
   fullyParallel: false,
   forbidOnly: true,
   retries: 0,

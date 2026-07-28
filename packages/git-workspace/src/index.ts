@@ -113,6 +113,18 @@ async function currentBranch(repositoryRoot: string): Promise<string> {
   return branch.stdout.trim();
 }
 
+async function localBranchHead(
+  repositoryRoot: string,
+  branch: string,
+): Promise<string | undefined> {
+  const result = await git(
+    repositoryRoot,
+    ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`],
+    { allowFailure: true },
+  );
+  return result.exitCode === 0 ? result.stdout.trim() : undefined;
+}
+
 async function headCommit(repositoryRoot: string): Promise<string> {
   const result = await git(
     repositoryRoot,
@@ -550,6 +562,13 @@ export async function cleanupWorkspace(
   workspace: PreparedWorkspace,
   options: CleanupWorkspaceOptions = {},
 ): Promise<void> {
+  const expectedBranch = `accesspath/${workspace.id}`;
+  if (workspace.branch !== expectedBranch) {
+    throw new GitWorkspaceError(
+      "NOT_OWNED",
+      "Worktree branch does not match the owned repair ID.",
+    );
+  }
   const artifactRoot = await canonicalDirectory(workspace.artifactRoot);
   const worktreesRoot = await canonicalDirectory(
     join(artifactRoot, "worktrees"),
@@ -580,6 +599,20 @@ export async function cleanupWorkspace(
     );
   }
   await assertBaseIntegrity(workspace);
+  const branchHead = await localBranchHead(
+    workspace.repositoryRoot,
+    workspace.branch,
+  );
+  if (
+    branchHead !== undefined &&
+    branchHead !== workspace.baseCommit &&
+    options.force !== true
+  ) {
+    throw new GitWorkspaceError(
+      "CONFLICT",
+      "Worktree branch contains commits; force must be explicit for cleanup.",
+    );
+  }
   await git(workspace.repositoryRoot, [
     "worktree",
     "remove",
@@ -588,6 +621,14 @@ export async function cleanupWorkspace(
     canonicalWorktree,
   ]);
   await git(workspace.repositoryRoot, ["worktree", "prune"]);
+  if (branchHead !== undefined) {
+    await git(workspace.repositoryRoot, [
+      "branch",
+      "-D",
+      "--",
+      workspace.branch,
+    ]);
+  }
   if (await pathExists(canonicalWorktree)) {
     const remainingPath = await realpath(canonicalWorktree);
     const remainingDetails = await lstat(canonicalWorktree);

@@ -5,7 +5,9 @@ import type {
   AuditSession,
   AuditState,
   Finding,
+  RepairManifest,
   RepairSession,
+  RepositoryConfig,
   TaskContract,
   TaskStepResult,
 } from "@accesspath/contracts";
@@ -54,6 +56,7 @@ import {
   ApiError,
   cancelAudit,
   createAudit,
+  createRepair,
   downloadReport,
   fetchArtifactUrl,
   getAudit,
@@ -63,6 +66,7 @@ import {
   resumeAudit,
   startAudit,
   streamAuditEvents,
+  validateRepository,
 } from "./api";
 import {
   type BarrierMapMode,
@@ -1031,16 +1035,24 @@ function BarrierMapView({
   bundle,
   initialFindingId,
   onBack,
+  onCreateRepair,
 }: {
   bundle: AuditBundle;
   initialFindingId?: string;
   onBack: () => void;
+  onCreateRepair: (
+    repositoryPath: string,
+    finding: Finding,
+  ) => Promise<void>;
 }) {
   const [mode, setMode] = useState<BarrierMapMode>("journey");
   const [selectedFindingId, setSelectedFindingId] = useState(initialFindingId);
   const [representation, setRepresentation] = useState<"map" | "linear">(() =>
     window.matchMedia("(max-width: 1023px)").matches ? "linear" : "map",
   );
+  const [repositoryPath, setRepositoryPath] = useState("");
+  const [repairBusy, setRepairBusy] = useState(false);
+  const [repairError, setRepairError] = useState<string>();
   const presentation = useMemo(
     () => buildBarrierPresentation(bundle, mode),
     [bundle, mode],
@@ -1117,8 +1129,51 @@ function BarrierMapView({
       {mode === "repair" && (
         <div className="mode-notice" role="status">
           <ClipboardCheck aria-hidden="true" />
-          <span>Select AP-001 to prepare the bounded repair in the next stage.</span>
+          <span>Select AP-001, attach the local fixture repository, and prepare an isolated repair.</span>
         </div>
+      )}
+      {mode === "repair" && selectedFinding?.id === "AP-001" && (
+        <form
+          className="repository-attach"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setRepairBusy(true);
+            setRepairError(undefined);
+            void onCreateRepair(repositoryPath, selectedFinding)
+              .catch((nextError) =>
+                setRepairError(
+                  nextError instanceof Error
+                    ? nextError.message
+                    : "The repository could not be attached.",
+                ),
+              )
+              .finally(() => setRepairBusy(false));
+          }}
+        >
+          <div>
+            <label htmlFor="repair-repository-path">Local fixture repository</label>
+            <input
+              id="repair-repository-path"
+              type="text"
+              value={repositoryPath}
+              onChange={(event) => setRepositoryPath(event.target.value)}
+              placeholder="Path ending in apps/demo-aid-app"
+              required
+            />
+            <p>AccessPath resolves the real Git root and keeps all edits in an external worktree.</p>
+          </div>
+          <button type="submit" disabled={repairBusy}>
+            {repairBusy ? (
+              <LoaderCircle className="spin" aria-hidden="true" />
+            ) : (
+              <ClipboardCheck aria-hidden="true" />
+            )}
+            Attach and create repair
+          </button>
+          {repairError !== undefined && (
+            <p className="field-error" role="alert">{repairError}</p>
+          )}
+        </form>
       )}
       {mode === "compare" && (
         <div className="mode-notice" role="status">
@@ -1404,6 +1459,77 @@ export function App() {
     navigate(`/audits/${session.id}/barrier-map`);
   };
 
+  const createRepairFromFinding = async (
+    repositoryPath: string,
+    finding: Finding,
+  ) => {
+    if (bundle === undefined || demoAidAppPort === undefined) {
+      throw new Error("The persisted audit and local fixture configuration are required.");
+    }
+    if (finding.id !== "AP-001") {
+      throw new Error("The MVP repair path is intentionally limited to AP-001.");
+    }
+    const validation = await validateRepository(repositoryPath);
+    const previewPort =
+      demoAidAppPort >= 65_535 ? 4_175 : demoAidAppPort + 1;
+    const startCommand: RepositoryConfig["startCommand"] = {
+      id: "preview-emergency-aid",
+      label: "Start repaired emergency-aid preview",
+      executable: "node",
+      args: ["apps/demo-aid-app/scripts/start-preview.mjs"],
+      cwdRelative: ".",
+      timeoutMs: 120_000,
+      category: "start",
+    };
+    const testCommand: RepositoryConfig["testCommands"][number] = {
+      id: "verify-ap-001",
+      label: "Verify AP-001 native radio repair",
+      executable: "node",
+      args: ["apps/demo-aid-app/tests/ap001-repair.mjs"],
+      cwdRelative: ".",
+      timeoutMs: 30_000,
+      category: "test",
+    };
+    const repository: RepositoryConfig = {
+      repositoryPath,
+      baseBranch: validation.baseBranch,
+      baseCommit: validation.baseCommit,
+      startCommand,
+      testCommands: [testCommand],
+      previewUrl: `http://127.0.0.1:${previewPort}/`,
+      allowedPathGlobs: ["apps/demo-aid-app/**"],
+    };
+    const evidenceRefs = bundle.artifacts.filter((artifact) =>
+      finding.evidenceIds.includes(artifact.id),
+    );
+    const manifest: RepairManifest = {
+      schemaVersion: "1.0.0",
+      id: `manifest-${crypto.randomUUID()}`,
+      auditBundleId: bundle.id,
+      findingIds: [finding.id],
+      affectedActions: [finding.affectedAction],
+      observations: [finding.observation],
+      evidenceRefs,
+      constraints: [
+        "Change only apps/demo-aid-app/** inside the isolated worktree.",
+        "Keep AP-002 through AP-005 intentionally present.",
+        "Use browser replay evidence to verify the selected task action.",
+      ],
+      nonGoals: [
+        "Do not repair unrelated findings.",
+        "Do not change the base checkout, Git remotes, or hosted infrastructure.",
+      ],
+      allowedPathGlobs: ["apps/demo-aid-app/**"],
+      verification: {
+        taskContract: bundle.task,
+        commands: [testCommand],
+      },
+    };
+    const repair = await createRepair(repository, manifest);
+    setRepairSession(repair);
+    navigate(`/repairs/${repair.id}`);
+  };
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to main content</a>
@@ -1458,6 +1584,7 @@ export function App() {
             bundle={bundle}
             initialFindingId={initialFindingId}
             onBack={() => session !== undefined && navigate(`/audits/${session.id}/live`)}
+            onCreateRepair={createRepairFromFinding}
           />
         )}
         {view === "barrier-map" && bundle === undefined && (

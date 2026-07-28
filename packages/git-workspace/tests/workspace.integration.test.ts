@@ -89,13 +89,21 @@ describe("real Git worktree lifecycle", () => {
     });
     await cleanupWorkspace(workspace, { force: true });
     await expect(access(workspace.worktreePath)).rejects.toThrow();
+    await expect(
+      runGit(
+        fixture.repository,
+        "rev-parse",
+        "--verify",
+        `refs/heads/${workspace.branch}`,
+      ),
+    ).rejects.toThrow();
     expect(await runGit(fixture.repository, "status", "--porcelain")).toBe("");
     expect(await runGit(fixture.repository, "rev-parse", "HEAD")).toBe(
       fixture.baseCommit,
     );
   }, 20_000);
 
-  it("rejects worktree path and branch collisions", async () => {
+  it("rejects active collisions and releases owned paths and refs on cleanup", async () => {
     const fixture = await createRepository();
     const workspace = await prepareWorkspace(fixture.config, {
       artifactRoot: fixture.artifactRoot,
@@ -109,12 +117,12 @@ describe("real Git worktree lifecycle", () => {
     ).rejects.toMatchObject({ code: "CONFLICT" });
     await cleanupWorkspace(workspace, { force: true });
 
-    await expect(
-      prepareWorkspace(fixture.config, {
-        artifactRoot: fixture.artifactRoot,
-        repairId: "repair-collision",
-      }),
-    ).rejects.toMatchObject({ code: "CONFLICT" });
+    const replacement = await prepareWorkspace(fixture.config, {
+      artifactRoot: fixture.artifactRoot,
+      repairId: "repair-collision",
+    });
+    expect(replacement.branch).toBe(workspace.branch);
+    await cleanupWorkspace(replacement);
   });
 
   it("cleans an unchanged owned worktree without a filesystem fallback", async () => {
@@ -126,6 +134,14 @@ describe("real Git worktree lifecycle", () => {
 
     await cleanupWorkspace(workspace);
     await expect(access(workspace.worktreePath)).rejects.toThrow();
+    await expect(
+      runGit(
+        fixture.repository,
+        "rev-parse",
+        "--verify",
+        `refs/heads/${workspace.branch}`,
+      ),
+    ).rejects.toThrow();
     expect(await runGit(fixture.repository, "status", "--porcelain")).toBe("");
   });
 

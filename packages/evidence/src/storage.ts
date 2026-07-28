@@ -160,7 +160,7 @@ export async function atomicWriteFile(
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (
-          attempt >= 5 ||
+          attempt >= 8 ||
           (code !== "EACCES" && code !== "EBUSY" && code !== "EPERM")
         ) {
           throw error;

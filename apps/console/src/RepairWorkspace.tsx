@@ -134,9 +134,16 @@ function StatusPill({
 }) {
   return (
     <span className="repair-status-pill" data-status={state}>
-      {state === "completed" || state === "passed" || state === "unchanged" ? (
+      {state === "completed" ||
+      state === "passed" ||
+      state === "resolved" ||
+      state === "unchanged" ? (
         <Check aria-hidden="true" />
-      ) : state === "failed" || state === "rejected" || state === "changed" ? (
+      ) : state === "failed" ||
+        state === "rejected" ||
+        state === "remaining" ||
+        state === "regressed" ||
+        state === "changed" ? (
         <AlertTriangle aria-hidden="true" />
       ) : state === "paused" ? (
         <CirclePause aria-hidden="true" />
@@ -313,13 +320,25 @@ function RepairCommandBar({
             Run diagnosis
           </button>
         )}
-        {repair.state === "editing" && !hasPendingApproval && (
+        {repair.state === "editing" &&
+          !hasDiff &&
+          !hasPendingApproval && (
           <button type="button" disabled={busy} onClick={() => void onAction(startRepair)}>
             <Play aria-hidden="true" />
-            {hasDiff ? "Continue repair" : "Start repair"}
+            Start repair
           </button>
         )}
-        {repair.state === "editing" && hasDiff && !hasPendingApproval && (
+        {repair.state === "editing" &&
+          hasDiff &&
+          !hasPendingApproval && (
+          <button type="button" disabled={busy} onClick={() => void onAction(startRepair)}>
+            <Play aria-hidden="true" />
+            Continue repair
+          </button>
+        )}
+        {repair.state === "editing" &&
+          hasDiff &&
+          !hasPendingApproval && (
           <button type="button" disabled={busy} onClick={() => void onAction(verifyRepair)}>
             <TestTube2 aria-hidden="true" />
             Verify patch
@@ -760,6 +779,22 @@ export function RepairWorkspace({
                 ))}
               </ul>
             )}
+            {resource.verification !== undefined && (
+              <div className="repair-comparison" aria-labelledby="repair-comparison-heading">
+                <h3 id="repair-comparison-heading">Before and after</h3>
+                <ul className="verification-list">
+                  {resource.verification.comparison.map((item) => (
+                    <li key={item.findingId}>
+                      <StatusPill state={item.afterState}>
+                        {item.afterState}
+                      </StatusPill>
+                      <strong>{item.findingId}</strong>
+                      <span>{item.explanation}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </section>
           <section className="repair-timeline">
             <header>
@@ -785,7 +820,8 @@ export function RepairWorkspace({
               </ol>
             )}
           </section>
-          {TERMINAL_REPAIR_STATES.has(resource.repair.state) && (
+          {(TERMINAL_REPAIR_STATES.has(resource.repair.state) ||
+            resource.verification !== undefined) && (
             <section className="repair-report-actions">
               <header>
                 <p className="eyebrow">Repair evidence</p>
@@ -794,6 +830,10 @@ export function RepairWorkspace({
               <button type="button" onClick={() => void downloadRepairReport(repairId, "markdown")}>
                 <FileText aria-hidden="true" />
                 Markdown
+              </button>
+              <button type="button" onClick={() => void downloadRepairReport(repairId, "html")}>
+                <FileCode2 aria-hidden="true" />
+                HTML
               </button>
               <button type="button" onClick={() => void downloadRepairReport(repairId, "json")}>
                 <FileJson aria-hidden="true" />

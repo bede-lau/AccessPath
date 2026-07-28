@@ -12,10 +12,17 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import {
+  AuditBundleSchema,
   RepositoryConfigSchema,
   RepairManifestSchema,
   type ApprovalRequest,
+  type TaskContract,
 } from "@accesspath/contracts";
+import {
+  createAuditDirectoryLayout,
+  persistAuditBundle,
+  regenerateReportsFromPersistedEvidence,
+} from "@accesspath/evidence";
 import { DeterministicMockQoderAdapter } from "@accesspath/qoder-runner";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
@@ -57,6 +64,18 @@ async function createRepository(): Promise<{
     join(repositoryRoot, "tests", "verify.mjs"),
     "console.log('repair verification passed');\n",
   );
+  await writeFile(
+    join(repositoryRoot, "preview.mjs"),
+    [
+      "import http from 'node:http';",
+      "const port = Number(process.env.PORT);",
+      "http.createServer((_request, response) => {",
+      "  response.writeHead(200, {'content-type': 'text/html'});",
+      "  response.end('<p>Selected</p>');",
+      "}).listen(port, '127.0.0.1');",
+      "",
+    ].join("\n"),
+  );
   await git(repositoryRoot, ["init", "-b", "main"]);
   await git(repositoryRoot, ["config", "user.name", "AccessPath Test"]);
   await git(repositoryRoot, [
@@ -80,8 +99,8 @@ function repairInputs(repositoryRoot: string, baseCommit: string) {
     startCommand: {
       id: "preview",
       label: "Preview",
-      executable: "node",
-      args: ["-e", "setInterval(() => {}, 1000)"],
+      executable: process.execPath,
+      args: ["preview.mjs"],
       cwdRelative: ".",
       timeoutMs: 10_000,
       category: "start",
@@ -157,6 +176,145 @@ function repairInputs(repositoryRoot: string, baseCommit: string) {
     },
   });
   return { manifest, repository };
+}
+
+async function seedSourceAudit(
+  artifactRoot: string,
+  task: TaskContract,
+): Promise<void> {
+  const layout = await createAuditDirectoryLayout(
+    artifactRoot,
+    "audit-source-ap-001",
+  );
+  await persistAuditBundle(
+    layout,
+    AuditBundleSchema.omit({ integrity: true }).parse({
+      schemaVersion: "1.0.0",
+      id: "audit-bundle-001",
+      auditSessionId: "audit-source-ap-001",
+      runId: "run-source-ap-001",
+      createdAt: "2026-07-28T00:00:00.000Z",
+      environment: {
+        browser: "chromium",
+        browserVersion: "1",
+        axeVersion: "1",
+        viewport: task.viewport,
+        targetOrigin: task.startUrl,
+      },
+      task,
+      outcome: "blocked",
+      steps: [
+        {
+          id: "step-before-ap-001",
+          instructionId: "choose",
+          sequence: 1,
+          state: "blocked",
+          intent: "Choose eligibility",
+          attemptedAction: "Press Space",
+          observedOutcome: "The control did not activate.",
+          url: task.startUrl,
+          title: "Eligibility",
+          startedAt: "2026-07-28T00:00:00.000Z",
+          completedAt: "2026-07-28T00:00:01.000Z",
+          evidence: [],
+        },
+      ],
+      findings: [
+        {
+          id: "AP-001",
+          title: "Eligibility is not keyboard operable",
+          affectedAction: "Choose eligibility",
+          source: "task-runner",
+          evidenceLabel: "observed",
+          severity: "blocker",
+          modality: ["keyboard"],
+          state: "open",
+          stepId: "choose",
+          wcagRefs: ["2.1.1"],
+          observation: "Space did not activate the choice.",
+          reproduction: ["Press Space on the choice."],
+          evidenceIds: [],
+          manualReview: [],
+        },
+      ],
+      artifacts: [],
+      limitations: [],
+    }),
+  );
+  await regenerateReportsFromPersistedEvidence(layout);
+}
+
+function createReplayAuditRunner() {
+  return async (
+    task: TaskContract,
+    options: {
+      artifactRoot: string;
+      auditSessionId?: string;
+      eventWriter?: (
+        event: import("@accesspath/contracts").AccessPathEvent<
+          Record<string, unknown>
+        >,
+      ) => Promise<unknown>;
+    },
+  ) => {
+    const auditSessionId = options.auditSessionId ?? "audit-after-repair";
+    const layout = await createAuditDirectoryLayout(
+      options.artifactRoot,
+      auditSessionId,
+    );
+    const bundle = await persistAuditBundle(
+      layout,
+      AuditBundleSchema.omit({ integrity: true }).parse({
+        schemaVersion: "1.0.0",
+        id: `bundle-${auditSessionId}`,
+        auditSessionId,
+        runId: `run-${auditSessionId}`,
+        createdAt: "2026-07-28T00:00:02.000Z",
+        environment: {
+          browser: "chromium",
+          browserVersion: "1",
+          axeVersion: "1",
+          viewport: task.viewport,
+          targetOrigin: task.startUrl,
+        },
+        task,
+        outcome: "passed",
+        steps: [
+          {
+            id: "step-after-ap-001",
+            instructionId: "choose",
+            sequence: 1,
+            state: "passed",
+            intent: "Choose eligibility",
+            attemptedAction: "Press Space",
+            observedOutcome: "Selected",
+            url: task.startUrl,
+            title: "Eligibility",
+            startedAt: "2026-07-28T00:00:02.000Z",
+            completedAt: "2026-07-28T00:00:03.000Z",
+            evidence: [],
+          },
+        ],
+        findings: [],
+        artifacts: [],
+        limitations: [],
+      }),
+    );
+    await options.eventWriter?.({
+      schemaVersion: "1.0.0",
+      eventId: `event-${auditSessionId}`,
+      sessionId: auditSessionId,
+      sequence: 1,
+      timestamp: "2026-07-28T00:00:03.000Z",
+      type: "audit.step.completed",
+      payload: { step: bundle.steps[0] },
+    });
+    return {
+      auditSessionId,
+      bundle,
+      reports: await regenerateReportsFromPersistedEvidence(layout),
+    };
+  };
 }
 
 function headers(
@@ -243,11 +401,13 @@ describe("companion repair API", () => {
       repositoryRoot,
       baseCommit,
     );
+    await seedSourceAudit(artifactRoot, manifest.verification.taskContract);
     server = createServer({
       launchToken,
       artifactRoot,
       editableRepositoryRoot: repositoryRoot,
       qoderAdapter: new DeterministicMockQoderAdapter({
+        completionDelayMs: 250,
         diagnosis: "Change the source and add one regression test.",
         edits: [
           {
@@ -262,6 +422,7 @@ describe("companion repair API", () => {
           },
         ],
       }),
+      auditRunner: createReplayAuditRunner(),
     });
 
     const validation = await server.inject({
@@ -540,6 +701,7 @@ describe("companion repair API", () => {
       repositoryRoot,
       baseCommit,
     );
+    await seedSourceAudit(artifactRoot, manifest.verification.taskContract);
     let verificationStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       verificationStarted = resolve;
@@ -564,6 +726,7 @@ describe("companion repair API", () => {
           },
         ],
       }),
+      auditRunner: createReplayAuditRunner(),
       repairCommandRunner: async (_command, _worktreePath, signal) =>
         new Promise((resolve) => {
           verificationStarted();

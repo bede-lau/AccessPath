@@ -1,4 +1,4 @@
-// Gate A script checks (P02): root scripts wiring and not-implemented behavior.
+// Root script wiring and legacy placeholder behavior.
 //
 // Deliberately does NOT run test:e2e/test:security/test:a11y/demo:verify via
 // npm — it invokes scripts/not-implemented.mjs directly with process.execPath
@@ -40,18 +40,22 @@ describe("root package.json scripts", () => {
     ) as { scripts?: Record<string, string> };
     const names = Object.keys(manifest.scripts ?? {});
     expect(names.sort()).toEqual([...EXPECTED_SCRIPTS].sort());
+    expect(manifest.scripts?.["demo:reset"]).toContain("demo-reset.ts");
+    expect(manifest.scripts?.["demo:verify"]).toContain("demo-verify.ts");
   });
 });
 
 describe("scripts/not-implemented.mjs", () => {
-  it("exits 2 with the exact stderr message for test:e2e", () => {
+  it("keeps legacy placeholder invocations explicitly nonzero", () => {
     const result = spawnSync(
       process.execPath,
-      [notImplementedScript, "test:e2e"],
+      [notImplementedScript, "legacy-gate"],
       { encoding: "utf8" },
     );
     expect(result.status).toBe(2);
-    expect(result.stderr).toMatch(/^test:e2e: not implemented until P07/);
+    expect(result.stderr).toContain(
+      "legacy-gate: no implementation is wired to this placeholder",
+    );
   });
 
   it("exits 2 with usage when no script name is given", () => {
@@ -62,22 +66,6 @@ describe("scripts/not-implemented.mjs", () => {
     expect(result.stderr).toContain("usage:");
   });
 
-  it("keeps every unfinished gate explicitly nonzero", () => {
-    for (const name of [
-      "test:e2e",
-      "test:security",
-      "test:a11y",
-      "demo:verify",
-    ]) {
-      const result = spawnSync(
-        process.execPath,
-        [notImplementedScript, name],
-        { encoding: "utf8" },
-      );
-      expect(result.status).toBe(2);
-      expect(result.stderr).toContain(`${name}: not implemented until`);
-    }
-  });
 });
 
 describe("process launch policy", () => {

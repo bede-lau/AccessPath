@@ -1035,6 +1035,44 @@ input[aria-invalid="true"] {
   color: #125456;
 }
 
+.repository-attach {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid #8ab7b6;
+  background: #f7fbfa;
+}
+
+.repository-attach > div {
+  min-width: 0;
+}
+
+.repository-attach label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.repository-attach input {
+  width: 100%;
+  min-height: 42px;
+}
+
+.repository-attach p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.repository-attach .field-error {
+  grid-column: 1 / -1;
+  color: #8b2f22;
+}
+
 .map-layout {
   min-height: 610px;
   display: grid;
@@ -1372,6 +1410,7 @@ input[aria-invalid="true"] {
 }
 
 .repair-status-pill[data-status="passed"],
+.repair-status-pill[data-status="resolved"],
 .repair-status-pill[data-status="unchanged"],
 .repair-status-pill[data-status="completed"] {
   color: #415c1c;
@@ -1379,6 +1418,8 @@ input[aria-invalid="true"] {
 }
 
 .repair-status-pill[data-status="failed"],
+.repair-status-pill[data-status="remaining"],
+.repair-status-pill[data-status="regressed"],
 .repair-status-pill[data-status="rejected"],
 .repair-status-pill[data-status="changed"],
 .repair-status-pill[data-status="destructive"] {
@@ -1742,6 +1783,21 @@ input[aria-invalid="true"] {
   color: var(--muted);
 }
 
+.repair-comparison {
+  border-top: 1px solid var(--rule);
+}
+
+.repair-comparison h3 {
+  margin: 0;
+  padding: 12px 14px 6px;
+  font-size: 12px;
+}
+
+.repair-comparison .verification-list li {
+  grid-template-columns: auto 52px minmax(0, 1fr);
+  align-items: start;
+}
+
 .repair-timeline ol {
   max-height: 470px;
   overflow: auto;
@@ -1973,6 +2029,10 @@ input[aria-invalid="true"] {
 }
 
 @media (max-width: 767px) {
+  .repository-attach {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .app-shell {
     display: block;
     padding-bottom: 64px;

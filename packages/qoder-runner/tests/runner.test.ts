@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -169,6 +169,75 @@ describe("@accesspath/qoder-runner", () => {
     await handle.close();
   });
 
+  it("creates an approved file with Write and deletes it on rewind", async () => {
+    const workspace = await temporaryWorkspace();
+    cleanups.push(workspace.cleanup);
+    const events: RunnerEvent[] = [];
+    const createdPath = join(
+      workspace.worktreePath,
+      "tests",
+      "created.test.ts",
+    );
+    const handle = await startRepairSession({
+      adapter: new DeterministicMockQoderAdapter({
+        edits: [
+          {
+            filePath: "src/feature.ts",
+            oldText: "old source",
+            newText: "new source",
+          },
+        ],
+        writes: [
+          {
+            filePath: "tests/created.test.ts",
+            content: "new regression test\n",
+          },
+        ],
+      }),
+      approvedPlan: "Edit the source and create a regression test.",
+      artifactRoot: workspace.artifactRoot,
+      emit: (event) => {
+        events.push(event);
+      },
+      manifest: repairManifest(),
+      mode: "repair",
+      repairSessionId: "repair-001",
+      requestApproval: async () => ({ decision: "approve-once" }),
+      worktreePath: workspace.worktreePath,
+    });
+
+    await expect(handle.turn).resolves.toMatchObject({
+      resultSubtype: "success",
+    });
+    await expect(readFile(createdPath, "utf8")).resolves.toBe(
+      "new regression test\n",
+    );
+    expect(events).toContainEqual({
+      type: "tool.started",
+      payload: expect.objectContaining({
+        toolName: "Write",
+        targetPaths: ["tests/created.test.ts"],
+      }),
+    });
+
+    await expect(handle.rewindFiles({ dryRun: true })).resolves.toMatchObject({
+      canRewind: true,
+      filesChanged: ["src/feature.ts", "tests/created.test.ts"],
+    });
+    await expect(access(createdPath)).resolves.toBeUndefined();
+
+    await expect(handle.rewindFiles()).resolves.toMatchObject({
+      canRewind: true,
+    });
+    await expect(
+      readFile(join(workspace.worktreePath, "src", "feature.ts"), "utf8"),
+    ).resolves.toBe("old source\n");
+    await expect(access(createdPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await handle.close();
+  });
+
   it("leaves files unchanged when an edit approval is denied", async () => {
     const workspace = await temporaryWorkspace();
     cleanups.push(workspace.cleanup);
@@ -198,6 +267,44 @@ describe("@accesspath/qoder-runner", () => {
     expect(
       await readFile(join(workspace.worktreePath, "src", "feature.ts"), "utf8"),
     ).toBe("old source\n");
+    await handle.close();
+  });
+
+  it("does not create a file when Write approval is denied", async () => {
+    const workspace = await temporaryWorkspace();
+    cleanups.push(workspace.cleanup);
+    const createdPath = join(workspace.worktreePath, "tests", "denied.test.ts");
+    const handle = await startRepairSession({
+      adapter: new DeterministicMockQoderAdapter({
+        writes: [
+          {
+            filePath: "tests/denied.test.ts",
+            content: "must not be written\n",
+          },
+        ],
+      }),
+      approvedPlan: "Attempt to create a regression test.",
+      artifactRoot: workspace.artifactRoot,
+      manifest: repairManifest(),
+      mode: "repair",
+      repairSessionId: "repair-001",
+      requestApproval: async () => ({
+        decision: "deny",
+        reason: "Not approved.",
+      }),
+      worktreePath: workspace.worktreePath,
+    });
+
+    await expect(handle.turn).resolves.toMatchObject({
+      resultSubtype: "success",
+    });
+    await expect(access(createdPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(handle.rewindFiles({ dryRun: true })).resolves.toMatchObject({
+      canRewind: false,
+      filesChanged: [],
+    });
     await handle.close();
   });
 

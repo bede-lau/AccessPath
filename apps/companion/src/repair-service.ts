@@ -13,9 +13,11 @@ import {
   RewindPreviewSchema,
   SCHEMA_VERSION,
   TestResultSchema,
+  VerificationRunSchema,
   type AccessPathEvent,
   type ApprovalDecision,
   type ApprovalRequest,
+  type AuditBundle,
   type Checkpoint,
   type CommandSpec,
   type RepairManifest,
@@ -24,6 +26,7 @@ import {
   type RepositoryConfig,
   type RewindPreview,
   type TestResult,
+  type VerificationRun,
 } from "@accesspath/contracts";
 import {
   assertBaseIntegrity,
@@ -53,7 +56,17 @@ import {
   resolveSafeRelativePath,
   validateArtifactRoot,
 } from "@accesspath/evidence";
-import { createProcessSupervisor } from "./process-supervisor";
+import { runPersistedAudit } from "./audit-pipeline";
+import {
+  createProcessSupervisor,
+  type SupervisedProcess,
+} from "./process-supervisor";
+import {
+  compareReplayEvidence,
+  loadAuditBundleById,
+  taskForPreview,
+  waitForPreview,
+} from "./repair-replay";
 
 type ApprovalRecord = {
   request: ApprovalRequest;
@@ -74,6 +87,7 @@ type RepairDirectoryLayout = {
   rewindPath: string;
   testsPath: string;
   verificationPath: string;
+  comparisonPath: string;
   commandsPath: string;
   eventsPath: string;
 };
@@ -94,6 +108,11 @@ type ActiveQoderSession = {
   turnCompleted: boolean;
 };
 
+type ActivePreview = {
+  process: SupervisedProcess;
+  url: string;
+};
+
 type RepairCommandName =
   | "approval"
   | "cancel"
@@ -101,6 +120,8 @@ type RepairCommandName =
   | "rewind-preview"
   | "start"
   | "verify";
+
+const REPAIR_TURN_SETTLE_GRACE_MS = 5_000;
 
 type CommandReceipts = Record<
   string,
@@ -136,6 +157,7 @@ export interface RepairServiceConfig {
   commandRunner?: RepairCommandRunner;
   editableRepositoryRoot: string;
   qoderAdapter?: QoderAdapter;
+  replayAuditRunner?: typeof runPersistedAudit;
 }
 
 export class RepairNotFoundError extends Error {}
@@ -191,6 +213,10 @@ function layoutFor(root: string, repairId: string): RepairDirectoryLayout {
       root,
       `${repairRelative}/verification.json`,
     ),
+    comparisonPath: resolveSafeRelativePath(
+      root,
+      `${repairRelative}/comparison.json`,
+    ),
     commandsPath: resolveSafeRelativePath(
       root,
       `${repairRelative}/commands.json`,
@@ -216,11 +242,21 @@ function diffHash(diff: GitDiffSnapshot): string {
     .digest("hex");
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 async function readJson<Value>(path: string): Promise<Value> {
   return JSON.parse(await readFile(path, "utf8")) as Value;
 }
 
 export class RepairService {
+  private readonly activePreviews = new Map<string, ActivePreview>();
   private readonly activeQoder = new Map<string, ActiveQoderSession>();
   private readonly activeVerifications = new Map<string, AbortController>();
   private readonly eventQueues = new Map<string, Promise<unknown>>();
@@ -840,6 +876,7 @@ export class RepairService {
         : undefined;
       const currentHash = diffHash(await this.diff(repairId));
       if (verification?.diffHash !== currentHash) {
+        await this.stopPreview(repairId);
         record.request = ApprovalRequestSchema.parse({
           ...record.request,
           state: "expired",
@@ -847,6 +884,7 @@ export class RepairService {
         await this.writeJson(layout, layout.approvalsPath, records);
         await this.writeJson(layout, layout.testsPath, []);
         await rm(layout.verificationPath, { force: true });
+        await rm(layout.comparisonPath, { force: true });
         await this.updateSession(repairId, (session) =>
           RepairSessionSchema.parse({
             ...session,
@@ -895,17 +933,32 @@ export class RepairService {
         state: decision.decision === "deny" ? "rejected" : "editing",
       });
     } else if (record.request.kind === "patch") {
+      await this.stopPreview(repairId);
       const privateRecord = await this.readPrivate(repairId);
       if (privateRecord.workspace !== undefined) {
         await assertBaseIntegrity(privateRecord.workspace);
       }
+      const decisionState =
+        decision.decision === "deny" ? "rejected" : "approved";
       await this.updateSession(repairId, (session) =>
         RepairSessionSchema.parse({
           ...session,
-          state: decision.decision === "deny" ? "rejected" : "completed",
+          state: decisionState,
           updatedAt: timestamp(),
         }),
       );
+      await this.appendEvent(repairId, "phase.changed", {
+        state: decisionState,
+      });
+      if (decision.decision !== "deny") {
+        await this.updateSession(repairId, (session) =>
+          RepairSessionSchema.parse({
+            ...session,
+            state: "completed",
+            updatedAt: timestamp(),
+          }),
+        );
+      }
       await this.appendEvent(
         repairId,
         decision.decision === "deny"
@@ -942,10 +995,36 @@ export class RepairService {
     };
   }
 
-  public verify(
+  private async waitForActiveRepairTurn(repairId: string): Promise<void> {
+    const active = this.activeQoder.get(repairId);
+    if (
+      active?.mode !== "repair" ||
+      active.turnCompleted ||
+      active.settled === undefined
+    ) {
+      return;
+    }
+    const pendingToolApproval = (await this.approvals(repairId)).some(
+      (record) =>
+        record.request.kind === "tool" &&
+        record.request.state === "pending",
+    );
+    if (pendingToolApproval) {
+      return;
+    }
+    await Promise.race([
+      active.settled,
+      new Promise<void>((resolve) =>
+        setTimeout(resolve, REPAIR_TURN_SETTLE_GRACE_MS),
+      ),
+    ]);
+  }
+
+  public async verify(
     repairId: string,
     idempotencyKey?: string,
   ): Promise<RepairSession> {
+    await this.waitForActiveRepairTurn(repairId);
     return this.withTransition(repairId, ["editing"], async (session) => {
       const active = this.activeQoder.get(repairId);
       const pendingToolApproval = (await this.approvals(repairId)).some(
@@ -1053,31 +1132,38 @@ export class RepairService {
         const passed =
           results.length === manifest.verification.commands.length &&
           results.every((result) => result.state === "passed");
-        const nextState = passed ? "awaiting-patch-approval" : "editing";
-        const updated = await this.writeSession(layout, {
-          ...session,
-          state: nextState,
-          updatedAt: timestamp(),
-        });
-        await this.appendEvent(repairId, "verification.completed", {
-          passed,
-          testCount: results.length,
-        });
-        if (passed) {
-          await this.writeJson(layout, layout.verificationPath, {
-            diffHash: diffHash(verifiedDiff),
+        if (!passed) {
+          await rm(layout.verificationPath, { force: true });
+          await rm(layout.comparisonPath, { force: true });
+          const updated = await this.writeSession(layout, {
+            ...session,
+            state: "editing",
+            updatedAt: timestamp(),
           });
-          await this.createApproval(repairId, {
-            kind: "patch",
-            title: "Approve the repair patch",
-            consequence:
-              "Accepts the displayed worktree diff after configured verification.",
-            risk: "write",
-            targetPaths: verifiedDiff.changedFiles,
+          await this.appendEvent(repairId, "verification.completed", {
+            passed: false,
+            testCount: results.length,
           });
+          return updated;
         }
-        return updated;
+        await this.writeJson(layout, layout.verificationPath, {
+          diffHash: diffHash(verifiedDiff),
+        });
+        await rm(layout.comparisonPath, { force: true });
+        return this.completeVerification(
+          repairId,
+          session,
+          layout,
+          {
+            repository: privateRecord.repository,
+            workspace: privateRecord.workspace,
+          },
+          manifest,
+          results,
+          verifiedDiff,
+        );
       } catch (error) {
+        await this.stopPreview(repairId);
         if ((await this.get(repairId)).state !== "cancelled") {
           await this.fail(repairId, error);
         }
@@ -1093,6 +1179,180 @@ export class RepairService {
       key: idempotencyKey,
       resourceId: repairId,
     });
+  }
+
+  private async stopPreview(repairId: string): Promise<void> {
+    const active = this.activePreviews.get(repairId);
+    if (active === undefined) {
+      return;
+    }
+    this.activePreviews.delete(repairId);
+    await active.process.cancel().catch(() => undefined);
+    await active.process.result.catch(() => undefined);
+  }
+
+  private async startPreview(
+    repairId: string,
+    repository: RepositoryConfig,
+    workspace: PreparedWorkspace,
+  ): Promise<ActivePreview> {
+    const existing = this.activePreviews.get(repairId);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const preview = new URL(repository.previewUrl);
+    const port =
+      preview.port ||
+      (preview.protocol === "https:" ? "443" : "80");
+    const supervisor = await createProcessSupervisor({
+      worktreePath: workspace.worktreePath,
+      commands: [repository.startCommand],
+      environment: {
+        DEMO_AID_APP_PORT: port,
+        PORT: port,
+      },
+      allowedEnvironmentKeys: ["DEMO_AID_APP_PORT", "PORT"],
+    });
+    const process = await supervisor.start(repository.startCommand, {
+      onOutput: (chunk) => {
+        void this.appendEvent(repairId, "test.output", {
+          commandId: repository.startCommand.id,
+          output: redactText(chunk.text),
+          stream: chunk.stream,
+        });
+      },
+    });
+    const active = { process, url: preview.href };
+    this.activePreviews.set(repairId, active);
+    void process.result.then(
+      () => {
+        if (this.activePreviews.get(repairId)?.process === process) {
+          this.activePreviews.delete(repairId);
+        }
+      },
+      () => {
+        if (this.activePreviews.get(repairId)?.process === process) {
+          this.activePreviews.delete(repairId);
+        }
+      },
+    );
+    await this.appendEvent(repairId, "tool.started", {
+      kind: "preview",
+      commandId: repository.startCommand.id,
+      pid: process.pid,
+    });
+    try {
+      await waitForPreview(active.url);
+    } catch (error) {
+      await this.stopPreview(repairId);
+      throw error;
+    }
+    await this.appendEvent(repairId, "tool.completed", {
+      kind: "preview",
+      commandId: repository.startCommand.id,
+      previewUrl: active.url,
+    });
+    return active;
+  }
+
+  public async verification(
+    repairId: string,
+  ): Promise<VerificationRun | undefined> {
+    const layout = await this.existingLayout(repairId);
+    return (await fileExists(layout.comparisonPath))
+      ? VerificationRunSchema.parse(await readJson(layout.comparisonPath))
+      : undefined;
+  }
+
+  private async completeVerification(
+    repairId: string,
+    session: RepairSession,
+    layout: RepairDirectoryLayout,
+    privateRecord: PrivateRepairRecord & { workspace: PreparedWorkspace },
+    manifest: RepairManifest,
+    tests: TestResult[],
+    verifiedDiff: GitDiffSnapshot,
+  ): Promise<RepairSession> {
+    const startedAt = timestamp();
+    const preview = await this.startPreview(
+      repairId,
+      privateRecord.repository,
+      privateRecord.workspace,
+    );
+    const before = await loadAuditBundleById(
+      layout.root,
+      manifest.auditBundleId,
+    );
+    if (before.task.id !== manifest.verification.taskContract.id) {
+      throw new RepairStateError(
+        session.state,
+        "The repair manifest does not reference the source audit task contract.",
+      );
+    }
+    const replayTask = taskForPreview(
+      manifest.verification.taskContract,
+      preview.url,
+    );
+    const auditRunner =
+      this.config.replayAuditRunner ?? runPersistedAudit;
+    const after = await auditRunner(replayTask, {
+      artifactRoot: layout.root,
+      editableRepositoryRoot: this.config.editableRepositoryRoot,
+      auditSessionId: `audit-after-${repairId}`,
+      eventWriter: async (event) =>
+        this.appendEvent(repairId, event.type, event.payload),
+    });
+    const comparison = compareReplayEvidence(
+      before,
+      after.bundle,
+      manifest.findingIds,
+    );
+    const run = VerificationRunSchema.parse({
+      id: `verification-${repairId}`,
+      repairSessionId: repairId,
+      startedAt,
+      completedAt: timestamp(),
+      previewUrl: preview.url,
+      tests,
+      auditBundleId: after.bundle.id,
+      comparison,
+    });
+    await this.writeJson(layout, layout.comparisonPath, run);
+
+    const patchStillMatches =
+      diffHash(verifiedDiff) === diffHash(await this.diff(repairId));
+    const selectedResolved = manifest.findingIds.every(
+      (findingId) =>
+        comparison.find((item) => item.findingId === findingId)
+          ?.afterState === "resolved",
+    );
+    const passed =
+      after.bundle.outcome === "passed" &&
+      patchStillMatches &&
+      selectedResolved;
+    const updated = await this.writeSession(layout, {
+      ...session,
+      state: passed ? "awaiting-patch-approval" : "editing",
+      updatedAt: timestamp(),
+    });
+    await this.appendEvent(repairId, "verification.completed", {
+      auditBundleId: after.bundle.id,
+      comparison,
+      kind: "task-replay",
+      passed,
+      testCount: tests.length,
+    });
+    if (passed) {
+      await this.createApproval(repairId, {
+        kind: "patch",
+        title: "Approve the repair patch",
+        consequence:
+          "Accepts the displayed worktree diff after configured checks and browser task replay.",
+        risk: "write",
+        targetPaths: verifiedDiff.changedFiles,
+      });
+    }
+    return updated;
   }
 
   public async rewindPreview(
@@ -1220,6 +1480,7 @@ export class RepairService {
         "The active repair checkpoint is unavailable.",
       );
     }
+    await this.stopPreview(repairId);
     const result = await active.handle.rewindFiles();
     const staleVerificationIds = (await this.tests(repairId)).map(
       (test) => `verification-${test.commandId}`,
@@ -1231,6 +1492,7 @@ export class RepairService {
     );
     await this.writeJson(layout, layout.testsPath, []);
     await rm(layout.verificationPath, { force: true });
+    await rm(layout.comparisonPath, { force: true });
     await this.appendEvent(repairId, "rewind.completed", {
       filesChanged: result.filesChanged ?? [],
       staleVerificationIds,
@@ -1350,7 +1612,15 @@ export class RepairService {
       await this.recordReceipt(layout, idempotency);
       return session;
     }
+    const cancelled = await this.updateSession(repairId, (current) =>
+      RepairSessionSchema.parse({
+        ...current,
+        state: "cancelled",
+        updatedAt: timestamp(),
+      }),
+    );
     this.activeVerifications.get(repairId)?.abort();
+    await this.stopPreview(repairId);
     const active = this.activeQoder.get(repairId);
     if (active !== undefined) {
       await active.handle.interrupt().catch(() => undefined);
@@ -1363,13 +1633,6 @@ export class RepairService {
       repairId,
       () => true,
       "Repair session cancelled.",
-    );
-    const cancelled = await this.updateSession(repairId, (current) =>
-      RepairSessionSchema.parse({
-        ...current,
-        state: "cancelled",
-        updatedAt: timestamp(),
-      }),
     );
     await this.appendEvent(repairId, "session.cancelled", {});
     await this.recordReceipt(layout, idempotency);
@@ -1449,6 +1712,8 @@ export class RepairService {
       verification.abort();
     }
     this.activeVerifications.clear();
+    const previews = [...this.activePreviews.keys()];
+    await Promise.all(previews.map((repairId) => this.stopPreview(repairId)));
     const active = [...this.activeQoder.entries()];
     this.activeQoder.clear();
     await Promise.all(
@@ -1488,18 +1753,42 @@ export class RepairService {
 
   public async report(
     repairId: string,
-    format: "json" | "markdown",
+    format: "html" | "json" | "markdown",
   ): Promise<{ content: string; contentType: string; filename: string }> {
     const session = await this.get(repairId);
+    const manifest = await this.manifest(repairId);
+    const verification = await this.verification(repairId);
+    const before = await loadAuditBundleById(
+      await this.artifactRoot(),
+      manifest.auditBundleId,
+    ).catch(() => undefined);
+    const after =
+      verification?.auditBundleId === undefined
+        ? undefined
+        : await loadAuditBundleById(
+            await this.artifactRoot(),
+            verification.auditBundleId,
+          ).catch(() => undefined);
     const report = redactValue({
       schemaVersion: SCHEMA_VERSION,
       repair: session,
+      manifest,
       plan: await this.plan(repairId),
       approvals: await this.approvals(repairId),
       tests: await this.tests(repairId),
+      verification,
+      beforeAudit: before,
+      afterAudit: after,
       diff: await this.diff(repairId),
       baseIntegrity: await this.baseIntegrity(repairId),
-    });
+    }) as {
+      afterAudit?: AuditBundle;
+      baseIntegrity: { unchanged: boolean };
+      beforeAudit?: AuditBundle;
+      diff: GitDiffSnapshot;
+      plan?: { text?: string };
+      verification?: VerificationRun;
+    };
     if (format === "json") {
       return {
         content: `${JSON.stringify(report, null, 2)}\n`,
@@ -1507,6 +1796,16 @@ export class RepairService {
         filename: "repair-report.json",
       };
     }
+    const comparison = report.verification?.comparison ?? [];
+    const comparisonMarkdown =
+      comparison.length === 0
+        ? "No browser replay comparison recorded."
+        : comparison
+            .map(
+              (item) =>
+                `- ${item.findingId}: ${item.afterState} - ${item.explanation}`,
+            )
+            .join("\n");
     const content = `# AccessPath Repair Evidence
 
 - Repair: ${session.id}
@@ -1514,20 +1813,79 @@ export class RepairService {
 - Repository: ${session.repository.repositoryDisplayName}
 - Base commit: ${session.repository.baseCommit}
 - Worktree branch: ${session.branch}
-- Base checkout unchanged: ${(report.baseIntegrity as { unchanged: boolean }).unchanged ? "yes" : "no"}
+- Base checkout unchanged: ${report.baseIntegrity.unchanged ? "yes" : "no"}
+- Before audit bundle: ${report.beforeAudit?.id ?? "Unavailable"}
+- After audit bundle: ${report.afterAudit?.id ?? "Not recorded"}
 
 ## Plan
 
-${(report.plan as { text?: string } | undefined)?.text ?? "No plan recorded."}
+${report.plan?.text ?? "No plan recorded."}
 
 ## Changed files
 
-${(report.diff as GitDiffSnapshot).changedFiles.map((path) => `- ${path}`).join("\n") || "- None"}
+${report.diff.changedFiles.map((path) => `- ${path}`).join("\n") || "- None"}
+
+## Before and after
+
+${comparisonMarkdown}
+
+## Verification
+
+${report.verification?.tests.map((test) => `- ${test.commandId}: ${test.state} (${test.durationMs} ms)`).join("\n") || "- No configured checks recorded."}
+
+## Limitations
+
+${[...(report.beforeAudit?.limitations ?? []), ...(report.afterAudit?.limitations ?? [])].map((limitation) => `- ${limitation}`).join("\n") || "- No additional limitations recorded."}
+`;
+    if (format === "markdown") {
+      return {
+        content: redactText(content),
+        contentType: "text/markdown; charset=utf-8",
+        filename: "repair-report.md",
+      };
+    }
+    const comparisonHtml =
+      comparison.length === 0
+        ? "<p>No browser replay comparison recorded.</p>"
+        : `<ul>${comparison
+            .map(
+              (item) =>
+                `<li><code>${escapeHtml(item.findingId)}</code>: <strong>${escapeHtml(item.afterState)}</strong> - ${escapeHtml(item.explanation)}</li>`,
+            )
+            .join("")}</ul>`;
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AccessPath Repair Evidence - ${escapeHtml(session.id)}</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:72rem;margin:0 auto;padding:2rem;color:#17241d}code{overflow-wrap:anywhere}dt{font-weight:700}dd{margin:0 0 .75rem}section{border-top:1px solid #b7c3bc;padding-top:1rem;margin-top:1.5rem}</style>
+</head>
+<body>
+<main>
+<h1>AccessPath Repair Evidence</h1>
+<dl>
+<dt>Repair</dt><dd><code>${escapeHtml(session.id)}</code></dd>
+<dt>State</dt><dd>${escapeHtml(session.state)}</dd>
+<dt>Repository</dt><dd>${escapeHtml(session.repository.repositoryDisplayName)}</dd>
+<dt>Base commit</dt><dd><code>${escapeHtml(session.repository.baseCommit)}</code></dd>
+<dt>Base checkout unchanged</dt><dd>${report.baseIntegrity.unchanged ? "yes" : "no"}</dd>
+<dt>Before audit bundle</dt><dd><code>${escapeHtml(report.beforeAudit?.id ?? "Unavailable")}</code></dd>
+<dt>After audit bundle</dt><dd><code>${escapeHtml(report.afterAudit?.id ?? "Not recorded")}</code></dd>
+</dl>
+<section><h2>Plan</h2><p>${escapeHtml(report.plan?.text ?? "No plan recorded.")}</p></section>
+<section><h2>Changed files</h2><ul>${report.diff.changedFiles.map((path) => `<li><code>${escapeHtml(path)}</code></li>`).join("") || "<li>None</li>"}</ul></section>
+<section><h2>Before and after</h2>${comparisonHtml}</section>
+<section><h2>Verification</h2><ul>${report.verification?.tests.map((test) => `<li><code>${escapeHtml(test.commandId)}</code>: ${escapeHtml(test.state)} (${test.durationMs} ms)</li>`).join("") || "<li>No configured checks recorded.</li>"}</ul></section>
+<section><h2>Limitations</h2><ul>${[...(report.beforeAudit?.limitations ?? []), ...(report.afterAudit?.limitations ?? [])].map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join("") || "<li>No additional limitations recorded.</li>"}</ul></section>
+</main>
+</body>
+</html>
 `;
     return {
-      content: redactText(content),
-      contentType: "text/markdown; charset=utf-8",
-      filename: "repair-report.md",
+      content: redactText(html),
+      contentType: "text/html; charset=utf-8",
+      filename: "repair-report.html",
     };
   }
 

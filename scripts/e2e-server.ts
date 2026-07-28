@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -19,6 +19,13 @@ import {
 } from "../packages/contracts/src/index";
 import { DeterministicMockQoderAdapter } from "../packages/qoder-runner/src/index";
 import { createServer as createViteServer } from "vite";
+import {
+  fixtureTaskContract,
+} from "../apps/demo-aid-app/src/fixture-data";
+import {
+  p07MockEdits,
+  p07MockWrites,
+} from "./p07-repair-fixture";
 
 const companionPort = 4801;
 const fixturePort = 4174;
@@ -33,32 +40,40 @@ process.env.VITE_ACCESSPATH_LAUNCH_TOKEN = launchToken;
 
 await rm(e2eRoot, { recursive: true, force: true });
 await rm(repositoryRoot, { recursive: true, force: true });
-await mkdir(join(repositoryRoot, "src"), { recursive: true });
-await mkdir(join(repositoryRoot, "tests"), { recursive: true });
-await writeFile(
-  join(repositoryRoot, "src", "eligibility.mjs"),
-  [
-    "export function activateEligibilityWithKeyboard() {",
-    "  return false;",
-    "}",
-    "",
-  ].join("\n"),
-  "utf8",
+await mkdir(join(repositoryRoot, "apps", "demo-aid-app", "public"), {
+  recursive: true,
+});
+await mkdir(join(repositoryRoot, "apps", "demo-aid-app", "scripts"), {
+  recursive: true,
+});
+await mkdir(join(repositoryRoot, "apps", "demo-aid-app", "tests"), {
+  recursive: true,
+});
+for (const filename of ["index.html", "app.js", "styles.css"]) {
+  await copyFile(
+    resolve("apps", "demo-aid-app", "public", filename),
+    join(repositoryRoot, "apps", "demo-aid-app", "public", filename),
+  );
+}
+await copyFile(
+  resolve("apps", "demo-aid-app", "scripts", "start-preview.mjs"),
+  join(
+    repositoryRoot,
+    "apps",
+    "demo-aid-app",
+    "scripts",
+    "start-preview.mjs",
+  ),
 );
-await writeFile(
-  join(repositoryRoot, "tests", "verify.mjs"),
-  [
-    "import { activateEligibilityWithKeyboard } from '../src/eligibility.mjs';",
-    "",
-    "if (activateEligibilityWithKeyboard() !== true) {",
-    "  console.error('AP-001 remains unresolved');",
-    "  process.exit(1);",
-    "}",
-    "",
-    "console.log('AP-001 keyboard activation verified');",
-    "",
-  ].join("\n"),
-  "utf8",
+await copyFile(
+  resolve("apps", "demo-aid-app", "tests", "fixture-data.test.ts"),
+  join(
+    repositoryRoot,
+    "apps",
+    "demo-aid-app",
+    "tests",
+    "fixture-data.test.ts",
+  ),
 );
 await execute("git", ["init", "-b", "main"], { cwd: repositoryRoot });
 await execute("git", ["config", "user.name", "AccessPath E2E"], {
@@ -88,15 +103,11 @@ const companion = await startCompanion({
   demoAidAppPort: fixturePort,
   qoderAdapter: new DeterministicMockQoderAdapter({
     diagnosis:
-      "Use the native keyboard activation path and preserve all unrelated behavior.",
-    edits: [
-      {
-        filePath: "src/eligibility.mjs",
-        oldText: "return false;",
-        newText: "return true;",
-      },
-    ],
-    repairSummary: "Applied the approved AP-001 keyboard repair.",
+      "Replace the pointer-only AP-001 choices with native radios and add one focused regression test.",
+    edits: p07MockEdits,
+    writes: p07MockWrites,
+    repairSummary:
+      "Applied the approved AP-001 native-radio repair and regression test.",
   }),
 });
 
@@ -108,9 +119,9 @@ const repository = RepositoryConfigSchema.parse({
     id: "preview",
     label: "Preview",
     executable: process.execPath,
-    args: ["src/eligibility.mjs"],
+    args: ["apps/demo-aid-app/scripts/start-preview.mjs"],
     cwdRelative: ".",
-    timeoutMs: 5_000,
+    timeoutMs: 120_000,
     category: "start",
   },
   testCommands: [
@@ -118,14 +129,14 @@ const repository = RepositoryConfigSchema.parse({
       id: "verify-ap-001",
       label: "Verify AP-001",
       executable: process.execPath,
-      args: ["tests/verify.mjs"],
+      args: ["apps/demo-aid-app/tests/ap001-repair.mjs"],
       cwdRelative: ".",
       timeoutMs: 5_000,
       category: "test",
     },
   ],
   previewUrl: `http://127.0.0.1:${fixturePort}/`,
-  allowedPathGlobs: ["src/**", "tests/**"],
+  allowedPathGlobs: ["apps/demo-aid-app/**"],
 });
 const manifest = RepairManifestSchema.parse({
   schemaVersion: "1.0.0",
@@ -140,28 +151,11 @@ const manifest = RepairManifestSchema.parse({
     "Keep AP-002 through AP-005 intentionally present in the base fixture.",
   ],
   nonGoals: ["Do not change unrelated task behavior."],
-  allowedPathGlobs: ["src/**", "tests/**"],
+  allowedPathGlobs: ["apps/demo-aid-app/**"],
   verification: {
     taskContract: {
-      schemaVersion: "1.0.0",
-      id: "task-e2e-ap-001",
-      title: "Emergency aid eligibility",
-      goal: "Choose eligibility with a keyboard.",
+      ...fixtureTaskContract,
       startUrl: `http://127.0.0.1:${fixturePort}/`,
-      targetPolicy: "local-explicit",
-      success: { visibleText: "Selected" },
-      forbiddenActions: [],
-      expectedSteps: [
-        {
-          id: "eligibility-choice",
-          intent: "Choose an eligibility option with a keyboard",
-          action: { kind: "press", key: "Space" },
-          checkpoint: true,
-        },
-      ],
-      fixtureValues: {},
-      viewport: { width: 1280, height: 800 },
-      timeoutMs: 10_000,
     },
     commands: repository.testCommands,
   },
@@ -189,7 +183,7 @@ const consoleServer = await createViteServer({
       transformIndexHtml(html) {
         return html.replace(
           "</head>",
-          `<script>window.__ACCESSPATH_E2E_REPAIR_ID__=${JSON.stringify(repairId)};</script></head>`,
+          `<script>window.__ACCESSPATH_E2E_REPAIR_ID__=${JSON.stringify(repairId)};window.__ACCESSPATH_E2E_REPOSITORY_PATH__=${JSON.stringify(join(repositoryRoot, "apps", "demo-aid-app"))};</script></head>`,
         );
       },
     },

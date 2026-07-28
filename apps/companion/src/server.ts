@@ -96,6 +96,7 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
     editableRepositoryRoot:
       config.editableRepositoryRoot ?? DEFAULT_REPOSITORY_ROOT,
     qoderAdapter: config.qoderAdapter,
+    replayAuditRunner: config.auditRunner,
   });
   serverTokens.set(server, launchToken);
 
@@ -453,6 +454,7 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
       plan: await repairService.plan(request.params.repairId),
       approvals: await repairService.listApprovals(request.params.repairId),
       tests: await repairService.tests(request.params.repairId),
+      verification: await repairService.verification(request.params.repairId),
       baseIntegrity: await repairService.baseIntegrity(
         request.params.repairId,
       ),
@@ -643,13 +645,17 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
     Querystring: { format?: string };
   }>("/api/repairs/:repairId/report", async (request, reply) => {
     const format = request.query.format;
-    if (format !== "markdown" && format !== "json") {
+    if (
+      format !== "html" &&
+      format !== "markdown" &&
+      format !== "json"
+    ) {
       return reply
         .code(400)
         .send(
           errorResponse(
             "INVALID_INPUT",
-            "format must be markdown or json.",
+            "format must be html, markdown, or json.",
             request.id,
           ),
         );

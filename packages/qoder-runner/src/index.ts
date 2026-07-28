@@ -4,6 +4,7 @@ export {
   DeterministicMockQoderAdapter,
   type DeterministicMockEdit,
   type DeterministicMockQoderOptions,
+  type DeterministicMockWrite,
 } from "./mock-adapter";
 export {
   createToolPolicy,

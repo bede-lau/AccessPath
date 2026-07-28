@@ -7,9 +7,11 @@ import {
   ErrorResponseSchema,
   RepairManifestSchema,
   RepairSessionSchema,
+  RepositoryConfigSchema,
   RewindPreviewSchema,
   TaskContractSchema,
   TestResultSchema,
+  VerificationRunSchema,
   type AccessPathEvent,
   type ApprovalDecision,
   type ApprovalRequest,
@@ -17,9 +19,11 @@ import {
   type AuditSession,
   type RepairManifest,
   type RepairSession,
+  type RepositoryConfig,
   type RewindPreview,
   type TaskContract,
   type TestResult,
+  type VerificationRun,
 } from "@accesspath/contracts";
 
 const LAUNCH_TOKEN =
@@ -68,7 +72,15 @@ export type RepairResource = {
   plan?: RepairPlan;
   approvals: ApprovalRecord[];
   tests: TestResult[];
+  verification?: VerificationRun;
   baseIntegrity: { unchanged: boolean };
+};
+
+export type RepositoryValidation = {
+  repositoryDisplayName: string;
+  baseBranch: string;
+  baseCommit: string;
+  clean: true;
 };
 
 function headers(extra: HeadersInit = {}): Headers {
@@ -211,7 +223,14 @@ function unwrapRepair(input: unknown): RepairSession {
 
 async function repairRequest(
   repairId: string,
-  action: "prepare" | "diagnose" | "start" | "pause" | "resume" | "cancel" | "verify",
+  action:
+    | "prepare"
+    | "diagnose"
+    | "start"
+    | "pause"
+    | "resume"
+    | "cancel"
+    | "verify",
 ): Promise<RepairSession> {
   const response = await request(
     `/api/repairs/${encodeURIComponent(repairId)}/${action}`,
@@ -254,8 +273,49 @@ export async function getRepair(repairId: string): Promise<RepairResource> {
     ...(plan === undefined ? {} : { plan }),
     approvals: input.approvals.map(parseApprovalRecord),
     tests: input.tests.map((test) => TestResultSchema.parse(test)),
+    ...(input.verification === undefined || input.verification === null
+      ? {}
+      : { verification: VerificationRunSchema.parse(input.verification) }),
     baseIntegrity: { unchanged: baseIntegrity.unchanged },
   };
+}
+
+export async function validateRepository(
+  repositoryPath: string,
+): Promise<RepositoryValidation> {
+  const response = await request("/api/repositories/validate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ repositoryPath }),
+  });
+  const input = (await response.json()) as {
+    repository?: Partial<RepositoryValidation>;
+  };
+  const repository = input.repository;
+  if (
+    typeof repository?.repositoryDisplayName !== "string" ||
+    typeof repository.baseBranch !== "string" ||
+    typeof repository.baseCommit !== "string" ||
+    repository.clean !== true
+  ) {
+    throw new ApiError(502, "The companion returned invalid repository metadata.");
+  }
+  return repository as RepositoryValidation;
+}
+
+export async function createRepair(
+  repository: RepositoryConfig,
+  manifest: RepairManifest,
+): Promise<RepairSession> {
+  const response = await request("/api/repairs", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      repository: RepositoryConfigSchema.parse(repository),
+      manifest: RepairManifestSchema.parse(manifest),
+    }),
+  });
+  return unwrapRepair(await response.json());
 }
 
 export const prepareRepair = (repairId: string) =>
@@ -370,7 +430,7 @@ export async function downloadReport(
 
 export async function downloadRepairReport(
   repairId: string,
-  format: "markdown" | "json",
+  format: "html" | "markdown" | "json",
 ): Promise<void> {
   const response = await request(
     `/api/repairs/${encodeURIComponent(repairId)}/report?format=${format}`,

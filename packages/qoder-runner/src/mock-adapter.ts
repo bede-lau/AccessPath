@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 
 import type {
   PermissionResult,
@@ -20,16 +20,35 @@ export interface DeterministicMockEdit {
   oldText: string;
 }
 
+export interface DeterministicMockWrite {
+  content: string;
+  filePath: string;
+}
+
 export interface DeterministicMockQoderOptions {
+  completionDelayMs?: number;
   diagnosis?: string;
   edits?: DeterministicMockEdit[];
   repairSummary?: string;
   streamDelayMs?: number;
+  writes?: DeterministicMockWrite[];
 }
 
-type OriginalFile = {
+type RewindEntry =
+  | {
+      action: "restore";
+      absolutePath: string;
+      content: string;
+      relativePath: string;
+    }
+  | {
+      action: "delete";
+      absolutePath: string;
+      relativePath: string;
+    };
+
+type ResolvedFile = {
   absolutePath: string;
-  content: string;
   relativePath: string;
 };
 
@@ -98,6 +117,7 @@ function resultMessage(
 function toolResultMessage(
   sessionId: string,
   toolUseId: string,
+  toolName: "Edit" | "Write",
   result: PermissionResult,
 ): SDKMessage {
   return {
@@ -110,7 +130,7 @@ function toolResultMessage(
           tool_use_id: toolUseId,
           content:
             result.behavior === "allow"
-              ? "Edit completed."
+              ? `${toolName} completed.`
               : result.message,
           is_error: result.behavior === "deny",
         },
@@ -136,7 +156,7 @@ async function delay(milliseconds: number): Promise<void> {
 class MockSession implements QoderAdapterSession {
   private closed = false;
   private interrupted = false;
-  private originals: OriginalFile[] = [];
+  private rewindEntries: RewindEntry[] = [];
 
   public constructor(
     private readonly startOptions: QoderAdapterStartOptions,
@@ -201,11 +221,19 @@ class MockSession implements QoderAdapterSession {
         edit.filePath,
       );
       const original = await readFile(target.absolutePath, "utf8");
-      if (!original.includes(edit.oldText)) {
+      const anchor = original.includes(edit.oldText)
+        ? edit.oldText
+        : original.includes(edit.oldText.replaceAll("\n", "\r\n"))
+          ? edit.oldText.replaceAll("\n", "\r\n")
+          : undefined;
+      if (anchor === undefined) {
         throw new Error(
           `Mock edit anchor was not found in ${target.relativePath}.`,
         );
       }
+      const replacement = anchor.includes("\r\n")
+        ? edit.newText.replaceAll("\n", "\r\n")
+        : edit.newText;
       const toolUseId = `tool-${randomUUID()}`;
       yield assistantMessage(sessionId, [
         {
@@ -232,13 +260,14 @@ class MockSession implements QoderAdapterSession {
         },
       );
       if (permission.behavior === "allow") {
-        this.originals.push({
+        this.rewindEntries.push({
+          action: "restore",
           ...target,
           content: original,
         });
         await writeFile(
           target.absolutePath,
-          original.replace(edit.oldText, edit.newText),
+          original.replace(anchor, replacement),
           "utf8",
         );
       } else {
@@ -249,12 +278,61 @@ class MockSession implements QoderAdapterSession {
           message: permission.message,
         });
       }
-      yield toolResultMessage(sessionId, toolUseId, permission);
+      yield toolResultMessage(sessionId, toolUseId, "Edit", permission);
+    }
+
+    for (const write of this.mockOptions.writes ?? []) {
+      if (this.interrupted || this.closed) {
+        return;
+      }
+      const target: ResolvedFile = await resolveWorktreePath(
+        this.startOptions.cwd,
+        write.filePath,
+      );
+      const toolUseId = `tool-${randomUUID()}`;
+      const input = {
+        file_path: write.filePath,
+        content: write.content,
+      };
+      yield assistantMessage(sessionId, [
+        {
+          type: "tool_use",
+          id: toolUseId,
+          name: "Write",
+          input,
+        },
+      ]);
+      const permission = await this.startOptions.canUseTool("Write", input, {
+        signal: this.startOptions.signal ?? new AbortController().signal,
+        toolUseID: toolUseId,
+      });
+      if (permission.behavior === "allow") {
+        await writeFile(target.absolutePath, write.content, {
+          encoding: "utf8",
+          flag: "wx",
+        });
+        this.rewindEntries.push({
+          action: "delete",
+          ...target,
+        });
+      } else {
+        permissionDenials.push({
+          tool_name: "Write",
+          tool_use_id: toolUseId,
+          tool_input: { file_path: write.filePath },
+          message: permission.message,
+        });
+      }
+      yield toolResultMessage(sessionId, toolUseId, "Write", permission);
     }
 
     const summary =
       this.mockOptions.repairSummary ??
       "Applied the approved repair and regression-test changes.";
+    await delay(this.mockOptions.completionDelayMs ?? 0);
+    if (this.interrupted || this.closed) {
+      return;
+    }
     yield assistantMessage(sessionId, [{ type: "text", text: summary }]);
     yield resultMessage(sessionId, summary, permissionDenials);
   }
@@ -271,12 +349,16 @@ class MockSession implements QoderAdapterSession {
     _userMessageId: string,
     options: { dryRun?: boolean } = {},
   ) {
-    const filesChanged = this.originals.map((file) => file.relativePath);
+    const filesChanged = this.rewindEntries.map((file) => file.relativePath);
     if (options.dryRun !== true) {
-      for (const file of this.originals) {
-        await writeFile(file.absolutePath, file.content, "utf8");
+      for (const file of this.rewindEntries.slice().reverse()) {
+        if (file.action === "restore") {
+          await writeFile(file.absolutePath, file.content, "utf8");
+        } else {
+          await rm(file.absolutePath, { force: true });
+        }
       }
-      this.originals = [];
+      this.rewindEntries = [];
     }
     return {
       canRewind: filesChanged.length > 0,
