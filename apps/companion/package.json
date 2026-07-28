@@ -11,7 +11,9 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
-    "fastify": "^5.10.0",
-    "@accesspath/contracts": "0.1.0"
+    "@accesspath/audit-engine": "0.1.0",
+    "@accesspath/contracts": "0.1.0",
+    "@accesspath/evidence": "0.1.0",
+    "fastify": "^5.10.0"
   }
 }

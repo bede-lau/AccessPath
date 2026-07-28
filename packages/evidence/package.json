@@ -7,6 +7,12 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "cd ../.. && vitest run packages/evidence/tests",
+    "test:security": "cd ../.. && vitest run --config vitest.security.config.ts packages/evidence/tests"
+  },
   "dependencies": {
     "@accesspath/contracts": "0.1.0"
   }

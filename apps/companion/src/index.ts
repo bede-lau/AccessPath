@@ -11,6 +11,11 @@ export {
   type StartConfig,
 } from "./server";
 export { loadEnv, type CompanionConfig } from "./env";
+export {
+  runPersistedAudit,
+  type PersistedAuditOptions,
+  type PersistedAuditResult,
+} from "./audit-pipeline";
 
 async function main(): Promise<void> {
   const config = loadEnv();

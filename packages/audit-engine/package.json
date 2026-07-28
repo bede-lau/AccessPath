@@ -7,7 +7,14 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "test": "cd ../.. && vitest run --config vitest.config.ts --project audit-engine",
+    "test:security": "cd ../.. && vitest run --config vitest.config.ts --project audit-engine --testNamePattern security:",
+    "typecheck": "tsc -p tsconfig.json"
+  },
   "dependencies": {
-    "@accesspath/contracts": "0.1.0"
+    "@accesspath/contracts": "0.1.0",
+    "axe-core": "4.12.1",
+    "playwright": "1.62.0"
   }
 }
