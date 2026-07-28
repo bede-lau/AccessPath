@@ -1,0 +1,38 @@
+{
+  "name": "accesspath",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24.0.0"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "lint": "node scripts/lint.mjs",
+    "typecheck": "node scripts/typecheck.mjs",
+    "test": "vitest run",
+    "test:e2e": "node scripts/not-implemented.mjs test:e2e",
+    "test:security": "node scripts/not-implemented.mjs test:security",
+    "test:a11y": "node scripts/not-implemented.mjs test:a11y",
+    "demo:reset": "node scripts/demo-reset.mjs",
+    "demo:verify": "node scripts/not-implemented.mjs demo:verify"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.0",
+    "@types/node": "^20.19.0",
+    "@vitest/coverage-v8": "4.1.10",
+    "eslint": "^10.8.0",
+    "jsdom": "^29.1.1",
+    "tsx": "^4.23.1",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "4.1.10"
+  },
+  "dependencies": {
+    "@vitest/runner": "^4.1.10"
+  }
+}

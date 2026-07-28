@@ -1,0 +1,13 @@
+{
+  "name": "@accesspath/audit-engine",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@accesspath/contracts": "0.1.0"
+  }
+}
