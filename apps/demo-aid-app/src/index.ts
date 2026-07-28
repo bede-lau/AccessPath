@@ -3,6 +3,19 @@ import type { AddressInfo } from "node:net";
 import { start, stop } from "./server";
 
 export { createDemoServer, start, stop } from "./server";
+export {
+  BARRIER_IDS,
+  expectedFindingManifest,
+  FIXTURE_ID,
+  fixtureTaskContract,
+} from "./fixture-data";
+export {
+  InMemoryFixtureStore,
+  parseTestSubmission,
+  type FixtureState,
+  type StoredTestSubmission,
+  type TestSubmissionInput,
+} from "./fixture-state";
 
 async function main(): Promise<void> {
   const server = await start();

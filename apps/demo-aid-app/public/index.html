@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Fictional emergency financial assistance application used for accessibility testing."
+    />
+    <title>Emergency Support Application - Test Service</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#application">Skip to application</a>
+
+    <header class="service-header">
+      <div class="service-header__inner">
+        <a class="service-name" href="/" aria-label="Emergency Support test service home">
+          Emergency Support
+        </a>
+        <span class="service-badge">Test service</span>
+      </div>
+    </header>
+
+    <aside class="notice" aria-label="Demonstration notice">
+      <strong>Demonstration only.</strong>
+      Use fictional information. Nothing is sent to a real agency.
+    </aside>
+
+    <div class="application-layout">
+      <nav class="progress" aria-label="Application progress">
+        <p class="progress__title">Your application</p>
+        <ol>
+          <li data-progress-step="1" aria-current="step">
+            <span>1</span> Check eligibility
+          </li>
+          <li data-progress-step="2"><span>2</span> Applicant profile</li>
+          <li data-progress-step="3"><span>3</span> Assistance details</li>
+          <li data-progress-step="4"><span>4</span> Review</li>
+          <li data-progress-step="5"><span>5</span> Confirmation</li>
+        </ol>
+      </nav>
+
+      <main id="application" class="application" tabindex="-1">
+        <section class="step-panel" data-step="1">
+          <p class="eyebrow">Step 1 of 5</p>
+          <h1 tabindex="-1">Check eligibility</h1>
+          <p class="lede">
+            This test program helps households facing an urgent, short-term
+            essential expense.
+          </p>
+
+          <div class="question">
+            <p class="question__label">
+              Does your household need help paying for an essential cost in the
+              next 30 days?
+            </p>
+            <p class="hint">Choose the answer that best fits today.</p>
+
+            <div
+              class="eligibility-options"
+              data-barrier-id="AP-001"
+              data-testid="eligibility-options"
+            >
+              <div
+                class="eligibility-option"
+                data-testid="eligibility-yes"
+                data-eligibility-value="yes"
+              >
+                <span class="eligibility-option__marker" aria-hidden="true"></span>
+                <span>
+                  <strong>Yes, my household needs help</strong>
+                  <small>Continue to the fictional application.</small>
+                </span>
+              </div>
+              <div
+                class="eligibility-option"
+                data-testid="eligibility-not-sure"
+                data-eligibility-value="not-sure"
+              >
+                <span class="eligibility-option__marker" aria-hidden="true"></span>
+                <span>
+                  <strong>I am not sure</strong>
+                  <small>You can still continue for this demonstration.</small>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button type="button" data-action="eligibility-next" disabled>
+              Continue
+            </button>
+          </div>
+        </section>
+
+        <section class="step-panel" data-step="2" hidden>
+          <p class="eyebrow">Step 2 of 5</p>
+          <h1 tabindex="-1">Create applicant profile</h1>
+          <p class="lede">
+            Enter the fictional contact details provided for this test.
+          </p>
+
+          <form data-form="profile">
+            <div class="field">
+              <label for="full-name">Full name</label>
+              <input
+                id="full-name"
+                name="fullName"
+                type="text"
+                autocomplete="name"
+                value="Jordan Example"
+                required
+              />
+            </div>
+
+            <div class="field">
+              <label for="phone">Phone number</label>
+              <p class="hint" id="phone-hint">Use the fictional number shown.</p>
+              <input
+                id="phone"
+                name="phone"
+                type="tel"
+                inputmode="tel"
+                aria-describedby="phone-hint"
+                data-barrier-id="AP-002"
+                value="202-555-0148"
+                required
+              />
+            </div>
+
+            <div class="actions">
+              <button class="button-secondary" type="button" data-action="back">
+                Back
+              </button>
+              <button type="submit">Continue</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="step-panel" data-step="3" hidden>
+          <p class="eyebrow">Step 3 of 5</p>
+          <h1 tabindex="-1">Enter assistance details</h1>
+          <p class="lede">Select at least one fictional essential need.</p>
+
+          <form data-form="assistance">
+            <p class="question__label">What do you need help with?</p>
+            <p class="hint" id="assistance-hint">Select all that apply.</p>
+            <div
+              class="check-list"
+              data-barrier-id="AP-003"
+              data-testid="assistance-options"
+            >
+              <label>
+                <input type="checkbox" name="assistanceType" value="housing" />
+                <span>
+                  <strong>Rent or temporary housing</strong>
+                  <small>Past-due rent or an urgent short-term place to stay.</small>
+                </span>
+              </label>
+              <label>
+                <input type="checkbox" name="assistanceType" value="utilities" />
+                <span>
+                  <strong>Essential utilities</strong>
+                  <small>Electricity, water, heating, or cooling service.</small>
+                </span>
+              </label>
+              <label>
+                <input type="checkbox" name="assistanceType" value="food" />
+                <span>
+                  <strong>Food and household supplies</strong>
+                  <small>Short-term grocery or essential household support.</small>
+                </span>
+              </label>
+            </div>
+            <p class="field-error" data-assistance-error hidden>
+              Select at least one assistance type.
+            </p>
+
+            <div class="actions">
+              <button class="button-secondary" type="button" data-action="back">
+                Back
+              </button>
+              <button type="submit">Review application</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="step-panel" data-step="4" hidden>
+          <p class="eyebrow">Step 4 of 5</p>
+          <h1 tabindex="-1">Review your test application</h1>
+          <p class="lede">
+            Check the fictional information before submitting it to this local
+            demonstration.
+          </p>
+
+          <div
+            class="error-summary"
+            data-barrier-id="AP-004"
+            data-testid="review-error-summary"
+            hidden
+          >
+            <h2>There is a problem</h2>
+            <p>Confirm that this application contains fictional test information.</p>
+          </div>
+
+          <dl class="review-list">
+            <div>
+              <dt>Eligibility</dt>
+              <dd data-review="eligibility"></dd>
+            </div>
+            <div>
+              <dt>Applicant</dt>
+              <dd data-review="fullName"></dd>
+            </div>
+            <div>
+              <dt>Phone</dt>
+              <dd data-review="phone"></dd>
+            </div>
+            <div>
+              <dt>Assistance requested</dt>
+              <dd data-review="assistanceTypes"></dd>
+            </div>
+          </dl>
+
+          <form data-form="review" novalidate>
+            <div class="confirmation-field">
+              <label>
+                <input
+                  type="checkbox"
+                  name="fictionalDataConfirmed"
+                  aria-describedby="confirmation-help confirmation-error"
+                />
+                <span>
+                  I confirm this application contains fictional test information only
+                </span>
+              </label>
+              <p class="hint" id="confirmation-help">
+                This service does not contact an agency or provide financial assistance.
+              </p>
+              <p class="field-error" id="confirmation-error" hidden>
+                Confirm that all information is fictional before submitting.
+              </p>
+            </div>
+
+            <div class="actions">
+              <button class="button-secondary" type="button" data-action="back">
+                Back
+              </button>
+              <button type="submit">Submit test application</button>
+            </div>
+          </form>
+        </section>
+
+        <section
+          class="step-panel confirmation"
+          data-step="5"
+          data-barrier-id="AP-005"
+          data-testid="submission-confirmation"
+          hidden
+        >
+          <div class="confirmation__check" aria-hidden="true">OK</div>
+          <p class="eyebrow">Step 5 of 5</p>
+          <h1>Test application submitted</h1>
+          <p class="lede">
+            Your fictional application was stored in this process memory only.
+            It was not sent to a real agency.
+          </p>
+          <div class="reference">
+            <span>Test reference</span>
+            <strong data-submission-reference>TEST-0001</strong>
+          </div>
+          <button class="button-secondary" type="button" data-action="start-over">
+            Start another test application
+          </button>
+        </section>
+      </main>
+
+      <aside class="help-panel" aria-labelledby="help-title">
+        <h2 id="help-title">Need immediate help?</h2>
+        <p>
+          This is not a real assistance service. In an emergency, contact an
+          appropriate local service directly.
+        </p>
+        <hr />
+        <p class="help-panel__meta">
+          No account is created. Test submissions are cleared when the fixture
+          resets or stops.
+        </p>
+      </aside>
+    </div>
+
+    <footer>
+      <p>Fictional service for AccessPath accessibility testing.</p>
+    </footer>
+  </body>
+</html>
