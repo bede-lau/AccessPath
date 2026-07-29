@@ -36,6 +36,20 @@ test.describe.serial("P05 URL-only audit", () => {
   });
 
   test("setup surface has no serious or critical axe violations @a11y", async () => {
+    await page.getByRole("button", { name: "Projects" }).click();
+    await expect(page).toHaveURL("/projects");
+    await expect(
+      page.getByRole("heading", { name: "Emergency aid demo" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/It does not invent a browser journey from the URL/),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Projects" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await page.getByRole("button", { name: "Open audit setup" }).click();
+
     await expect(page.getByRole("heading", { name: "Review the critical path" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Audits" })).toHaveAttribute(
       "aria-current",

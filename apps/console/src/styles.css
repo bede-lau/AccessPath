@@ -368,11 +368,16 @@ h3 {
   background: var(--review-soft);
 }
 
+.projects-page,
 .setup-page,
 .barrier-page {
   width: min(1480px, 100%);
   margin: 0 auto;
   padding: 28px 32px 52px;
+}
+
+.projects-page {
+  width: min(1180px, 100%);
 }
 
 .live-page,
@@ -390,14 +395,14 @@ h3 {
   gap: 24px;
 }
 
-.page-heading > div > p:last-child,
+.page-heading .page-summary,
 .barrier-header > div > p:last-child {
   margin: 9px 0 0;
   color: var(--muted);
   font-size: 0.96rem;
 }
 
-.page-heading > div > p:last-child {
+.page-heading .page-summary {
   max-width: none;
 }
 
@@ -410,9 +415,169 @@ h3 {
 }
 
 @media (min-width: 1280px) {
-  .page-heading > div > p:last-child {
+  .page-heading .page-summary {
     white-space: nowrap;
   }
+}
+
+.project-introduction {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(240px, 0.7fr);
+  gap: 28px 48px;
+  padding: 34px 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.project-introduction-copy h2 {
+  font-size: 1.45rem;
+}
+
+.project-introduction-copy > p:last-child {
+  max-width: 67ch;
+  margin: 12px 0 0;
+  color: var(--muted);
+}
+
+.project-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.project-facts {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  margin: 0;
+  border-top: 1px solid var(--rule);
+}
+
+.project-facts > div {
+  min-width: 0;
+  padding: 20px 22px 0 0;
+}
+
+.project-facts dt {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.project-facts dd {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 5px 0 0;
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.project-facts dd svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.project-facts code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.demo-flow-section {
+  padding: 36px 0 0;
+}
+
+.demo-flow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.demo-flow li {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  padding: 22px 20px;
+  border-right: 1px solid var(--rule);
+}
+
+.demo-flow li:last-child {
+  border-right: 0;
+}
+
+.demo-flow li > span {
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.demo-flow strong {
+  display: block;
+  font-size: 0.86rem;
+}
+
+.demo-flow p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.project-privacy-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.project-privacy-note svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  color: var(--verified);
+}
+
+.template-note {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 10px;
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  color: var(--muted);
+  background: var(--surface-subtle);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+
+.template-note > svg {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  color: var(--accent);
+}
+
+.template-note strong {
+  display: block;
+  color: var(--ink);
+  font-size: 0.82rem;
+}
+
+.template-note p {
+  margin: 3px 0 0;
+  font-size: 0.78rem;
 }
 
 .icon-button,
@@ -421,6 +586,7 @@ h3 {
 .export-menu button,
 .view-switcher button,
 .map-toolbar button,
+.project-actions button,
 .repository-attach button,
 .empty-route > button,
 .repair-report-actions button,
@@ -454,6 +620,7 @@ h3 {
 .export-menu button:hover:not(:disabled),
 .view-switcher button:hover:not(:disabled),
 .map-toolbar button:hover:not(:disabled),
+.project-actions button:hover:not(:disabled),
 .repository-attach button:hover:not(:disabled),
 .empty-route > button:hover:not(:disabled),
 .repair-report-actions button:hover:not(:disabled) {
@@ -479,6 +646,7 @@ h3 {
 .export-menu button svg,
 .view-switcher button svg,
 .map-toolbar button svg,
+.project-actions button svg,
 .repository-attach button svg,
 .empty-route > button svg,
 .repair-report-actions button svg,
@@ -2173,6 +2341,26 @@ input[aria-invalid="true"] {
 }
 
 @media (max-width: 1023px) {
+  .project-introduction {
+    grid-template-columns: 1fr;
+  }
+
+  .project-actions {
+    justify-content: flex-start;
+  }
+
+  .demo-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .demo-flow li:nth-child(2) {
+    border-right: 0;
+  }
+
+  .demo-flow li:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--rule);
+  }
+
   .setup-layout {
     grid-template-columns: 1fr;
   }
@@ -2284,6 +2472,7 @@ input[aria-invalid="true"] {
     min-height: calc(100vh - 68px);
   }
 
+  .projects-page,
   .setup-page,
   .barrier-page {
     padding: 20px 16px 34px;
@@ -2304,6 +2493,50 @@ input[aria-invalid="true"] {
 
   .page-heading > .status-badge {
     width: fit-content;
+  }
+
+  .project-introduction {
+    gap: 22px;
+    padding: 26px 0;
+  }
+
+  .project-actions {
+    display: grid;
+  }
+
+  .project-actions button {
+    width: 100%;
+  }
+
+  .project-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .project-facts > div {
+    padding: 14px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .project-facts > div:last-child {
+    border-bottom: 0;
+  }
+
+  .demo-flow {
+    grid-template-columns: 1fr;
+  }
+
+  .demo-flow li,
+  .demo-flow li:nth-child(2) {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .demo-flow li:last-child {
+    border-bottom: 0;
+  }
+
+  .project-privacy-note {
+    align-items: flex-start;
   }
 
   .setup-workspace > section {

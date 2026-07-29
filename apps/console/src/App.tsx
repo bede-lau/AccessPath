@@ -83,7 +83,7 @@ import {
 import { createReviewedAuditTask } from "./reviewed-task";
 import { RepairWorkspace } from "./RepairWorkspace";
 
-type View = "setup" | "live" | "barrier-map" | "repair";
+type View = "projects" | "setup" | "live" | "barrier-map" | "repair";
 type ConnectionState =
   | "idle"
   | "connecting"
@@ -125,6 +125,9 @@ function navigate(path: string): void {
 }
 
 function inferView(pathname: string): View {
+  if (pathname === "/" || /^\/projects\/?$/.test(pathname)) {
+    return "projects";
+  }
   if (/^\/repairs\/[^/]+/.test(pathname)) {
     return "repair";
   }
@@ -207,7 +210,12 @@ function AppRail({
   connection: ConnectionState;
 }) {
   const items = [
-    { label: "Projects", icon: Archive, enabled: true, view: "setup" as View },
+    {
+      label: "Projects",
+      icon: Archive,
+      enabled: true,
+      view: "projects" as View,
+    },
     { label: "Audits", icon: Activity, enabled: true, view: "live" as View },
     {
       label: "Barrier Map",
@@ -234,7 +242,7 @@ function AppRail({
           const active =
             item.view === "live"
               ? view === "setup" || view === "live"
-              : item.view !== "setup" && item.view === view;
+              : item.view === view;
           return (
             <button
               type="button"
@@ -242,8 +250,8 @@ function AppRail({
               disabled={!item.enabled}
               aria-current={active ? "page" : undefined}
               onClick={() => {
-                if (item.view === "setup") {
-                  navigate("/projects/demo/audits/new");
+                if (item.view === "projects") {
+                  navigate("/projects");
                 } else if (item.view === "live") {
                   navigate(
                     auditId === undefined
@@ -285,6 +293,137 @@ function AppRail({
         </span>
       </div>
     </aside>
+  );
+}
+
+function ProjectOverview({
+  connection,
+  demoAidAppPort,
+  session,
+}: {
+  connection: ConnectionState;
+  demoAidAppPort?: number;
+  session?: AuditSession;
+}) {
+  return (
+    <main id="main-content" className="projects-page" tabIndex={-1}>
+      <div className="page-heading project-page-heading">
+        <div>
+          <p className="route-breadcrumb">Projects</p>
+          <h1>Emergency aid demo</h1>
+          <p className="page-summary">
+            A seeded audit-to-repair scenario for one critical keyboard journey.
+          </p>
+        </div>
+        <StatusBadge
+          state={connection === "connected" ? "ready" : "failed"}
+          label={
+            connection === "connected"
+              ? "Demo ready"
+              : connection === "connecting"
+                ? "Checking demo"
+                : "Demo unavailable"
+          }
+        />
+      </div>
+
+      <section
+        className="project-introduction"
+        aria-labelledby="project-introduction-heading"
+      >
+        <div className="project-introduction-copy">
+          <p className="eyebrow">Guided demonstration</p>
+          <h2 id="project-introduction-heading">
+            Live evidence, reviewed journey
+          </h2>
+          <p>
+            AccessPath captures Playwright and axe evidence from the target URL.
+            It does not invent a browser journey from the URL; this project uses
+            a pre-reviewed task so the audit and repair replay stay reproducible.
+          </p>
+        </div>
+        <div className="project-actions">
+          <button
+            type="button"
+            className="primary-command"
+            onClick={() => navigate("/projects/demo/audits/new")}
+          >
+            <Play aria-hidden="true" />
+            Open audit setup
+          </button>
+          {session !== undefined && (
+            <button
+              type="button"
+              onClick={() => navigate(`/audits/${session.id}/live`)}
+            >
+              <Activity aria-hidden="true" />
+              Resume current audit
+            </button>
+          )}
+        </div>
+        <dl className="project-facts">
+          <div>
+            <dt>Target</dt>
+            <dd>
+              <Link2 aria-hidden="true" />
+              <code>
+                http://127.0.0.1:{demoAidAppPort ?? 4173}/
+              </code>
+            </dd>
+          </div>
+          <div>
+            <dt>Reviewed actions</dt>
+            <dd>11 deterministic browser steps</dd>
+          </div>
+          <div>
+            <dt>Expected findings</dt>
+            <dd>AP-001 through AP-005</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="demo-flow-section" aria-labelledby="demo-flow-heading">
+        <div>
+          <p className="eyebrow">One bounded path</p>
+          <h2 id="demo-flow-heading">Demo flow</h2>
+        </div>
+        <ol className="demo-flow">
+          <li>
+            <span aria-hidden="true">1</span>
+            <div>
+              <strong>Audit the running fixture</strong>
+              <p>Confirm the URL and reviewed task, then collect live evidence.</p>
+            </div>
+          </li>
+          <li>
+            <span aria-hidden="true">2</span>
+            <div>
+              <strong>Inspect the Barrier Map</strong>
+              <p>Review AP-001 through AP-005 around the affected actions.</p>
+            </div>
+          </li>
+          <li>
+            <span aria-hidden="true">3</span>
+            <div>
+              <strong>Repair AP-001 locally</strong>
+              <p>Attach the repository only after choosing the repair path.</p>
+            </div>
+          </li>
+          <li>
+            <span aria-hidden="true">4</span>
+            <div>
+              <strong>Replay and export evidence</strong>
+              <p>Verify the repair, preserve residual findings, and preview rewind.</p>
+            </div>
+          </li>
+        </ol>
+        <p className="project-privacy-note">
+          <ShieldCheck aria-hidden="true" />
+          Repository access is requested only after you choose to repair a
+          finding.
+        </p>
+      </section>
+    </main>
   );
 }
 
@@ -365,7 +504,7 @@ function AuditSetup({
         <div>
           <p className="route-breadcrumb">Emergency aid demo / New audit</p>
           <h1>Review the critical path</h1>
-          <p>
+          <p className="page-summary">
             Run one deterministic keyboard journey and preserve the evidence
             for every completed or blocked step.
           </p>
@@ -380,6 +519,18 @@ function AuditSetup({
                 : "Companion disconnected"
           }
         />
+      </div>
+
+      <div className="template-note">
+        <ClipboardCheck aria-hidden="true" />
+        <div>
+          <strong>Seeded demo template</strong>
+          <p>
+            The target URL is editable. The keyboard journey and fictional
+            values are preloaded; AccessPath executes these reviewed steps
+            instead of inventing a path from the URL.
+          </p>
+        </div>
       </div>
 
       <form className="setup-layout" onSubmit={submit} noValidate>
@@ -402,8 +553,8 @@ function AuditSetup({
                 }}
               />
               <p id="target-help" className="field-help">
-                Local URLs stay on this machine and require an explicit local
-                policy.
+                The fixture URL is prefilled. A different target must expose
+                the reviewed journey below; local URLs require the local policy.
               </p>
               {urlError !== null && (
                 <p id="target-error" className="field-error">
@@ -1606,6 +1757,13 @@ export function App() {
           </div>
         )}
         <div className="route-transition" key={view}>
+          {view === "projects" && (
+            <ProjectOverview
+              connection={connection}
+              demoAidAppPort={demoAidAppPort}
+              session={session}
+            />
+          )}
           {view === "setup" && (
             <AuditSetup
               busy={busy}

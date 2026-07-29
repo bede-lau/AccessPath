@@ -13,6 +13,25 @@ async function repairId(page: import("@playwright/test").Page): Promise<string> 
   });
 }
 
+test("Projects overview reflows to 320 CSS pixels and opens audit setup", async ({
+  page,
+}) => {
+  await page.goto("/projects");
+  await expect(
+    page.getByRole("heading", { name: "Emergency aid demo" }),
+  ).toBeVisible();
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+
+  expect(dimensions.clientWidth).toBe(320);
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+
+  await page.getByRole("button", { name: "Open audit setup" }).click();
+  await expect(page).toHaveURL("/projects/demo/audits/new");
+});
+
 test("setup reflows to 320 CSS pixels without horizontal page overflow", async ({
   page,
 }) => {

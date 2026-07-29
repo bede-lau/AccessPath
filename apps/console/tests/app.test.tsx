@@ -204,6 +204,33 @@ describe("P05 console surfaces", () => {
     ).toBeDefined();
   });
 
+  it("uses Projects as the guided demo starting point", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+
+    expect(window.location.pathname).toBe("/projects");
+    expect(
+      screen.getByRole("heading", { name: "Emergency aid demo" }),
+    ).toBeDefined();
+    expect(
+      screen.getByText(
+        /It does not invent a browser journey from the URL/,
+      ),
+    ).toBeDefined();
+    expect(
+      screen
+        .getByRole("button", { name: "Projects" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open audit setup" }));
+
+    expect(window.location.pathname).toBe("/projects/demo/audits/new");
+    expect(
+      screen.getByRole("heading", { name: "Review the critical path" }),
+    ).toBeDefined();
+  });
+
   it("submits edited task intent, success text, and reviewed step labels", async () => {
     render(<App />);
     fireEvent.change(screen.getByLabelText("Task intent"), {
