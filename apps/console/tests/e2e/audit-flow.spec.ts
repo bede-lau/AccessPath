@@ -37,7 +37,43 @@ test.describe.serial("P05 URL-only audit", () => {
 
   test("setup surface has no serious or critical axe violations @a11y", async () => {
     await expect(page.getByRole("heading", { name: "Review the critical path" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Audits" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    const description = page.getByText(
+      "Run one deterministic keyboard journey and preserve the evidence for every completed or blocked step.",
+      { exact: true },
+    );
+    const descriptionLayout = await description.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const box = element as HTMLElement;
+      return {
+        lines: range.getClientRects().length,
+        clipped: box.scrollWidth > box.clientWidth,
+      };
+    });
+    expect(descriptionLayout).toEqual({ lines: 1, clipped: false });
     await expectNoSeriousOrCriticalViolations(page);
+  });
+
+  test("incomplete target URL stays on the setup surface", async () => {
+    const target = page.getByLabel("Target URL");
+    const originalUrl = await target.inputValue();
+
+    await target.fill("");
+    await expect(
+      page.getByRole("heading", { name: "Review the critical path" }),
+    ).toBeVisible();
+    const run = page.getByRole("button", { name: "Run reviewed audit" });
+    await expect(run).toBeEnabled();
+    await run.click();
+    await expect(
+      page.getByText("Enter a complete HTTP or HTTPS URL."),
+    ).toBeVisible();
+
+    await target.fill(originalUrl);
   });
 
   test("keyboard starts one URL-only fixture audit and reaches AP-001 through AP-005 @a11y", async () => {

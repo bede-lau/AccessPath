@@ -167,6 +167,43 @@ describe("P05 console surfaces", () => {
     expect(api.createAudit).not.toHaveBeenCalled();
   });
 
+  it("keeps the audit setup rendered while the target URL is incomplete", async () => {
+    render(<App />);
+    const target = screen.getByLabelText("Target URL");
+
+    fireEvent.change(target, { target: { value: "" } });
+
+    expect(
+      screen.getByRole("heading", { name: "Review the critical path" }),
+    ).toBeDefined();
+    expect(target.getAttribute("value")).toBe("");
+
+    const runButton = screen.getByRole("button", {
+      name: "Run reviewed audit",
+    });
+    await waitFor(() =>
+      expect(runButton).not.toHaveProperty("disabled", true),
+    );
+    fireEvent.click(runButton);
+    expect(
+      await screen.findByText("Enter a complete HTTP or HTTPS URL."),
+    ).toBeDefined();
+    expect(api.createAudit).not.toHaveBeenCalled();
+  });
+
+  it("treats Audits as the current pre-audit destination", () => {
+    render(<App />);
+    const audits = screen.getByRole("button", { name: "Audits" });
+
+    expect(audits.getAttribute("aria-current")).toBe("page");
+    fireEvent.click(audits);
+
+    expect(window.location.pathname).toBe("/projects/demo/audits/new");
+    expect(
+      screen.getByRole("heading", { name: "Review the critical path" }),
+    ).toBeDefined();
+  });
+
   it("submits edited task intent, success text, and reviewed step labels", async () => {
     render(<App />);
     fireEvent.change(screen.getByLabelText("Task intent"), {

@@ -231,7 +231,10 @@ function AppRail({
       <nav aria-label="Primary">
         {items.map((item) => {
           const Icon = item.icon;
-          const active = item.view === view;
+          const active =
+            item.view === "live"
+              ? view === "setup" || view === "live"
+              : item.view !== "setup" && item.view === view;
           return (
             <button
               type="button"
@@ -241,8 +244,12 @@ function AppRail({
               onClick={() => {
                 if (item.view === "setup") {
                   navigate("/projects/demo/audits/new");
-                } else if (auditId !== undefined && item.view === "live") {
-                  navigate(`/audits/${auditId}/live`);
+                } else if (item.view === "live") {
+                  navigate(
+                    auditId === undefined
+                      ? "/projects/demo/audits/new"
+                      : `/audits/${auditId}/live`,
+                  );
                 } else if (
                   auditId !== undefined &&
                   item.view === "barrier-map"
@@ -298,15 +305,14 @@ function AuditSetup({
     `http://127.0.0.1:${demoAidAppPort ?? 4173}/`,
   );
   const [urlEdited, setUrlEdited] = useState(false);
-  const effectiveUrl = urlEdited
-    ? url
-    : `http://127.0.0.1:${demoAidAppPort ?? 4173}/`;
+  const defaultUrl = `http://127.0.0.1:${demoAidAppPort ?? 4173}/`;
+  const effectiveUrl = urlEdited ? url : defaultUrl;
   const [policy, setPolicy] = useState<"public" | "local-explicit">(
     "local-explicit",
   );
   const baseTask = useMemo(
-    () => createReviewedAuditTask(effectiveUrl, policy),
-    [effectiveUrl, policy],
+    () => createReviewedAuditTask(defaultUrl, policy),
+    [defaultUrl, policy],
   );
   const [goal, setGoal] = useState(baseTask.goal);
   const [successText, setSuccessText] = useState(
@@ -327,6 +333,10 @@ function AuditSetup({
     try {
       parsed = new URL(effectiveUrl);
     } catch {
+      setUrlError("Enter a complete HTTP or HTTPS URL.");
+      return;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       setUrlError("Enter a complete HTTP or HTTPS URL.");
       return;
     }
@@ -388,6 +398,7 @@ function AuditSetup({
                 onChange={(event) => {
                   setUrlEdited(true);
                   setUrl(event.target.value);
+                  setUrlError(null);
                 }}
               />
               <p id="target-help" className="field-help">
