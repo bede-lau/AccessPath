@@ -963,7 +963,8 @@ input[aria-invalid="true"] {
   .path-rail,
   .findings-queue,
   .evidence-stage {
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
     overscroll-behavior: contain;
   }
 

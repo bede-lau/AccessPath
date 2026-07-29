@@ -22,7 +22,8 @@ npm run dev
 
 Open the console URL printed by `npm run dev`, normally
 `http://127.0.0.1:5173`. The emergency-aid fixture and local companion start
-with it.
+with it. Occupied default backend ports are replaced with the next available
+loopback ports and printed in the terminal.
 
 ## Verification
 

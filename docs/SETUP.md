@@ -50,8 +50,13 @@ npm run dev
 - the emergency-aid fixture, normally `http://127.0.0.1:4173`
 - the local companion, normally `http://127.0.0.1:4801`
 
-Use the exact URLs printed in the terminal if a configured port is already in
-use. Keep the companion bound to loopback; do not expose it to the LAN.
+The development runner automatically selects the next available loopback port
+when a default backend port is already occupied. Use the exact ports printed in
+the terminal. To force a specific value, set
+`ACCESSPATH_DEV_DEMO_AID_APP_PORT` or `ACCESSPATH_DEV_COMPANION_PORT` before
+launch; an unavailable explicit port exits nonzero instead of leaving a partial
+stack running. Keep the companion bound to loopback; do not expose it to the
+LAN.
 
 ## Full Interactive Demo
 
@@ -149,9 +154,10 @@ npx playwright install chromium
 
 ### Port Already In Use
 
-Stop the previous `npm run dev` process with `Ctrl+C`, or use the alternate
-URLs printed by the new process. Do not run two demo stacks against the same
-artifact root.
+Stop the previous `npm run dev` process with `Ctrl+C`. For unrelated port
+collisions, leave the other process alone and use the alternate backend ports
+printed by AccessPath. Do not run two demo stacks against the same artifact
+root.
 
 ### Repository Is Dirty
 

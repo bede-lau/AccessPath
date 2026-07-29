@@ -7,24 +7,91 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 // DEV-ONLY PORT WIRING:
-// - ACCESSPATH_PORT=4801 is injected into the companion child so it listens on
-//   a knowable port during local development.
-// - ACCESSPATH_DEV_PROXY_PORT=4801 is injected into the console child so the
-//   Vite /api proxy targets that same companion port.
-// - DEMO_AID_APP_PORT=4173 is injected into the demo-aid-app fixture child.
+// - The companion prefers 4801 and the fixture prefers 4173.
+// - When a preferred default is occupied, the next free loopback port is used.
+// - Explicit ACCESSPATH_DEV_* overrides fail closed when unavailable.
+// - The selected companion port is injected into the Vite /api proxy.
 // This is a development-only convenience; the product security/runtime default
 // remains ACCESSPATH_PORT=0 (OS-selected port). Do NOT promote this fixed port
 // to a runtime default.
-const DEV_COMPANION_PORT =
-  process.env.ACCESSPATH_DEV_COMPANION_PORT ?? "4801";
-const DEV_DEMO_AID_APP_PORT =
-  process.env.ACCESSPATH_DEV_DEMO_AID_APP_PORT ?? "4173";
+function parsePort(value, label) {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${label} must be an integer from 1 to 65535.`);
+  }
+  return port;
+}
+
+function isPortAvailable(port) {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", (error) => {
+      if (error.code === "EADDRINUSE" || error.code === "EACCES") {
+        resolve(false);
+        return;
+      }
+      reject(error);
+    });
+    server.listen({ host: "127.0.0.1", port, exclusive: true }, () => {
+      server.close((error) => {
+        if (error !== undefined) {
+          reject(error);
+          return;
+        }
+        resolve(true);
+      });
+    });
+  });
+}
+
+async function resolveDevelopmentPort(environmentKey, defaultPort) {
+  const configured = process.env[environmentKey];
+  if (configured !== undefined) {
+    const port = parsePort(configured, environmentKey);
+    if (!(await isPortAvailable(port))) {
+      throw new Error(
+        `${environmentKey}=${port} is unavailable on 127.0.0.1.`,
+      );
+    }
+    return port;
+  }
+
+  for (let port = defaultPort; port < defaultPort + 20; port += 1) {
+    if (await isPortAvailable(port)) {
+      return port;
+    }
+  }
+  throw new Error(
+    `No free loopback port was found from ${defaultPort} through ${defaultPort + 19}.`,
+  );
+}
+
+let DEV_COMPANION_PORT;
+let DEV_DEMO_AID_APP_PORT;
+try {
+  [DEV_COMPANION_PORT, DEV_DEMO_AID_APP_PORT] = await Promise.all([
+    resolveDevelopmentPort("ACCESSPATH_DEV_COMPANION_PORT", 4801),
+    resolveDevelopmentPort("ACCESSPATH_DEV_DEMO_AID_APP_PORT", 4173),
+  ]);
+  if (DEV_COMPANION_PORT === DEV_DEMO_AID_APP_PORT) {
+    throw new Error(
+      "The development companion and fixture must use different ports.",
+    );
+  }
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`[dev] ${message}\n`);
+  process.exit(1);
+}
+
 const DEV_LAUNCH_TOKEN = randomBytes(32).toString("base64url");
 
 // Fixed constant commands only — one consistent npm-based approach for all
