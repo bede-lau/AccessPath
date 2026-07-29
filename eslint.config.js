@@ -34,6 +34,8 @@ export default [
       "**/dist/**",
       "**/coverage/**",
       "**/.vite/**",
+      ".agents/**",
+      ".codex/**",
       "package-lock.json",
     ],
   },

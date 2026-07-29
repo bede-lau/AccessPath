@@ -1,47 +1,13 @@
 # Manual Setup
 
-## Part 1: Create the Qoder workspace
+## What You Need
 
-The current handoff directory is documentation, not the application
-repository. Create a fresh Git repository and place these files under `docs`.
+- Git 2.40 or newer
+- Node.js 20.19 or newer, matching `.nvmrc`
+- npm
+- Playwright Chromium
 
-PowerShell example:
-
-```powershell
-$Source = "C:\Users\bedel\OneDrive\Desktop\research_papers_brain\accesspath-qoder-handoff"
-$Target = "C:\Users\bedel\OneDrive\Desktop\accesspath"
-
-New-Item -ItemType Directory -Force $Target | Out-Null
-New-Item -ItemType Directory -Force "$Target\docs" | Out-Null
-Copy-Item "$Source\*" "$Target\docs" -Recurse -Force
-
-Set-Location $Target
-git init
-git add docs
-git commit `
-  -m "Establish the implementation contract before code changes" `
-  -m "Constraint: The Qoder workspace begins from a documentation-only handoff." `
-  -m "Confidence: high" `
-  -m "Scope-risk: narrow" `
-  -m "Directive: Preserve the documented source-of-truth order while building." `
-  -m "Tested: Documentation links and consistency checks" `
-  -m "Not-tested: Application implementation does not exist yet"
-```
-
-Open `C:\Users\bedel\OneDrive\Desktop\accesspath` as the workspace root in
-Qoder IDE. Wait for repository indexing to finish before the first Quest.
-
-## Part 2: Prerequisites
-
-Install:
-
-- Qoder Desktop or another supported Qoder interface
-- Git
-- Node.js 20 LTS or newer
-- npm included with Node
-- Chromium through Playwright after dependencies exist
-
-Verify:
+Verify the local tools:
 
 ```powershell
 git --version
@@ -49,211 +15,176 @@ node --version
 npm --version
 ```
 
-Expected baseline:
+## Install
 
-```text
-Node.js >= 20
-Git >= 2.40
+From the AccessPath repository root:
+
+```powershell
+npm install
+npx playwright install chromium
 ```
 
-The Qoder Agent SDK supports Node.js 18 or newer, but AccessPath standardizes
-on Node 20.
+Keep all generated evidence and repair worktrees outside the repository:
 
-## Part 3: Qoder authentication
+```powershell
+$env:ACCESSPATH_ARTIFACT_ROOT = "$HOME\.accesspath\demo"
+```
 
-Use one supported method:
+The variable is optional because AccessPath defaults to the same external
+home-directory location. When set, it must be an absolute path outside the
+editable repository.
 
-1. Existing `qodercli` login/session on the machine.
-2. A Qoder personal access token in
-   `QODER_PERSONAL_ACCESS_TOKEN`.
+## Start The Product
+
+Reset only AccessPath-owned demo artifacts, then start all three application
+shells:
+
+```powershell
+npm run demo:reset
+npm run dev
+```
+
+`npm run dev` starts:
+
+- the React console, normally `http://127.0.0.1:5173`
+- the emergency-aid fixture, normally `http://127.0.0.1:4173`
+- the local companion, normally `http://127.0.0.1:4801`
+
+Use the exact URLs printed in the terminal if a configured port is already in
+use. Keep the companion bound to loopback; do not expose it to the LAN.
+
+## Full Interactive Demo
+
+With `npm run dev` running:
+
+1. Open the console URL.
+2. Confirm `Companion ready`.
+3. Keep `Local explicit` selected.
+4. Review the seeded URL, task, success condition, and path.
+5. Click `Run reviewed audit`.
+6. Wait for `Open Barrier Map`, then open it.
+7. Confirm AP-001 through AP-005 are present.
+8. Select the first action containing AP-001.
+9. Select the `repair` mode.
+10. Enter the absolute path ending in `apps\demo-aid-app`.
+11. Click `Attach and create repair`.
+12. Click `Prepare worktree`.
+13. Click `Run diagnosis`.
+14. Review `Approve the repair plan`, then click `Approve once`.
+15. Click `Start repair`.
+16. Approve the two bounded file edits with `Approve once`.
+17. Click `Verify patch`.
+18. Confirm AP-001 is `resolved`.
+19. Confirm AP-002 through AP-005 remain visible as `remaining`.
+20. Download the HTML, Markdown, and JSON reports.
+21. Click `Preview rewind` and inspect the affected files and warning.
+
+The repair changes only the generated worktree under
+`ACCESSPATH_ARTIFACT_ROOT\worktrees`. The base checkout must remain unchanged.
+
+## Automated Verification
+
+Run the complete local test matrix:
+
+```powershell
+npm run lint
+npm run typecheck
+npm run test
+npm run test:security
+npm run test:a11y
+npm run test:e2e
+```
+
+The release proof is:
+
+```powershell
+npm run demo:reset
+npm run demo:verify
+npm run demo:reset
+npm run demo:verify
+```
+
+`demo:verify` uses the deterministic mock Qoder adapter. It exercises the full
+audit-to-repair-to-replay flow without credentials or live Qoder credits.
+
+## Optional Live Qoder SDK Smoke
+
+The real SDK smoke is separate from the complete demo. Use one supported
+authentication method:
+
+1. An existing local `qodercli` login/session.
+2. A Qoder personal access token in `QODER_PERSONAL_ACCESS_TOKEN`.
 
 For a temporary PowerShell session:
 
 ```powershell
 $env:QODER_PERSONAL_ACCESS_TOKEN = "<token>"
-```
-
-For local development, place non-secret configuration in `.env.local` and
-keep the token outside committed files. Add all `.env*` variants except an
-example file to `.gitignore`.
-
-Never paste the token into Qoder prompts, screenshots, reports, or demo video.
-
-Official references:
-
-- `https://docs.qoder.com/en/cli/sdk/quick-start`
-- `https://docs.qoder.com/en/cli/sdk/authentication`
-- `https://docs.qoder.com/en/cli/sdk/permissions`
-
-## Part 4: Expected environment files
-
-Qoder should create:
-
-```text
-.env.example
-.gitignore
-.nvmrc
-package.json
-tsconfig.base.json
-```
-
-Suggested `.env.example`:
-
-```dotenv
-ACCESSPATH_HOST=127.0.0.1
-ACCESSPATH_PORT=0
-ACCESSPATH_ARTIFACT_ROOT=.accesspath
-ACCESSPATH_LOG_LEVEL=info
-QODER_PERSONAL_ACCESS_TOKEN=
-DEMO_AID_APP_PORT=4174
-```
-
-The real token must never be required in client-side Vite variables.
-
-## Part 5: Install and run the completed repository
-
-After the scaffold phase:
-
-```powershell
-npm install
-npx playwright install chromium
-npm run dev
-```
-
-`npm run dev` should:
-
-- start the emergency-aid fixture
-- start the local companion on `127.0.0.1`
-- start or serve the React console
-- print the AccessPath URL
-- perform health checks
-- shut down all owned processes on exit
-
-Open the printed AccessPath URL. Do not expose the companion to the LAN.
-
-## Part 6: First smoke test
-
-```powershell
-npm run demo:reset
-npm run lint
-npm run typecheck
-npm run test
-npm run test:e2e
-```
-
-In the console:
-
-1. Confirm `Local companion connected`.
-2. Create an audit using the seeded emergency-aid fixture URL.
-3. Select `Local or private target`.
-4. Load the seeded task path.
-5. Run the audit.
-6. Confirm AP-001 through AP-005 appear.
-
-## Part 7: Live Qoder SDK smoke test
-
-Use a disposable test repository.
-
-1. Validate Qoder authentication.
-2. Start a read-only diagnosis.
-3. Confirm streamed user-facing messages appear.
-4. Confirm reads stay inside the disposable worktree.
-5. Approve one small file edit.
-6. Confirm Git diff matches the edit.
-7. Interrupt a second turn.
-8. Preview and apply file rewind.
-9. Search logs and artifacts for the token.
-
-Expose this as:
-
-```powershell
 npm run test:qoder:live
 ```
 
-The command must skip with a clear message when no token or local Qoder
-authentication is available. It must not silently pass.
+Run this at most once during a verification pass. The command exits nonzero
+with a clear message when neither authentication method is available. That
+external limitation does not block the mock-backed product demo.
 
-## Part 8: Demo configuration
+Never place the token in a Vite variable, committed file, screenshot, report,
+or demo recording.
 
-The repository should include a committed fixture configuration similar to:
+## Troubleshooting
 
-```json
-{
-  "projectName": "Emergency Aid Demo",
-  "targetPolicy": "local-explicit",
-  "fixtureUrl": "http://127.0.0.1:4174",
-  "taskContract": "fixtures/emergency-aid/task.json",
-  "repositoryPath": "apps/demo-aid-app",
-  "startCommandId": "demo-aid-app",
-  "testCommandIds": ["demo-unit", "demo-e2e"]
-}
-```
+### The Latest Command Appears Frozen
 
-Runtime absolute paths are resolved locally and excluded from export.
+`npm run dev` is a long-running process. Once it prints the console, fixture,
+and companion URLs, leave that terminal open and use the product in the
+browser. Stop it with `Ctrl+C` after the demo.
 
-## Part 9: Reset and cleanup
+`npm run test:e2e` can be quiet while Chromium runs the full vertical slice.
+Wait for its final Playwright summary. If it exceeds the configured timeout,
+it exits nonzero rather than reporting success.
 
-`npm run demo:reset` must:
-
-- stop owned fixture, preview, test, and SDK processes
-- remove only demo-generated `.accesspath` audits and repairs
-- remove only verified application-owned worktrees
-- restore the committed seeded fixture state using a non-destructive fixture
-  mechanism
-- preserve unrelated files and user changes
-
-The command must print every path it intends to remove and fail closed if a
-resolved path leaves the repository.
-
-## Part 10: Troubleshooting
-
-### Qoder authentication required
-
-- Check that the token exists only in the current environment.
-- Run the minimal SDK smoke test.
-- Reauthenticate using the supported Qoder CLI flow.
-- Do not add bypass permissions.
-
-### Playwright cannot find Chromium
+### Playwright Cannot Find Chromium
 
 ```powershell
 npx playwright install chromium
 ```
 
-Confirm the package and browser versions are pinned by the lockfile.
+### Port Already In Use
 
-### Port already in use
+Stop the previous `npm run dev` process with `Ctrl+C`, or use the alternate
+URLs printed by the new process. Do not run two demo stacks against the same
+artifact root.
 
-The companion should choose a random port. The fixture and preview managers
-should either select another port or explain which configured process owns the
-conflict.
+### Repository Is Dirty
 
-### Repository is dirty
+The repair plane and `demo:verify` intentionally require a clean base checkout.
+Commit the intended local changes or use a clean disposable clone. AccessPath
+must never alter a dirty base checkout.
 
-The MVP intentionally refuses repair. Commit, stash, or use a disposable clone
-outside AccessPath, then validate again. AccessPath must never alter the dirty
-base checkout.
+### Qoder Authentication Required
 
-### Event stream reconnecting
+This only affects `npm run test:qoder:live`. Reauthenticate with `qodercli` or
+set a temporary `QODER_PERSONAL_ACCESS_TOKEN`. Continue using the mock-backed
+full demo when live credentials or credits are unavailable.
 
-Refresh once. The console should reconnect using `Last-Event-ID` and replay
-stored events. If it cannot, inspect the session `events.ndjson` and preserve
-the run for diagnosis.
+### Event Stream Reconnecting
 
-### Preview timed out
+The console reconnects with `Last-Event-ID` and replays durable events. If the
+state does not recover, preserve the run for diagnosis and restart with
+`npm run demo:reset`.
+
+### Preview Timed Out
 
 Check the configured start command, expected preview URL, and process output.
-The finding remains `unverified`; do not mark it resolved from test output
-alone.
+The finding remains unverified; do not mark it resolved from test output alone.
 
-## Fresh-machine checklist
+## Fresh-Machine Checklist
 
-- clone repository
-- configure Qoder authentication
+- clone the repository
+- use Node matching `.nvmrc`
 - `npm install`
-- install Chromium
-- run all validation commands
-- run `demo:reset`
-- complete the demo flow
-- confirm base checkout remains clean
-- confirm no secrets in `.accesspath`
+- `npx playwright install chromium`
+- set an external artifact root
+- run the complete test matrix
+- run `demo:reset` and `demo:verify` twice
+- complete one keyboard-only interactive demo
+- confirm the base checkout remains clean
+- confirm no secrets or personal absolute paths appear in exported artifacts

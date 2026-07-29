@@ -119,7 +119,7 @@ test.describe.serial("P07 audit-to-repair vertical slice", () => {
     await expect(page.getByText("No verification run recorded.")).toBeVisible();
 
     await page.getByRole("button", { name: "Cancel" }).click();
-    await expect(page.getByText("cancelled", { exact: true })).toBeVisible();
+    await expect(page.getByText("Cancelled repair", { exact: true })).toBeVisible();
     await expect(page.getByText("Base unchanged", { exact: true })).toBeVisible();
 
     const renderedText = await page.locator("body").innerText();

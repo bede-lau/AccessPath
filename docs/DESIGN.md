@@ -13,12 +13,15 @@ security, and the evidence hierarchy in `RESEARCH_BASIS.md`.
 **Product promise:** Show where an essential web task becomes inaccessible,
 then make the repair observable, reviewable, and verifiable.
 
-**Aesthetic:** Forensic field console. The product should feel calm, exact,
-accountable, and built for repeated engineering work. It is an operational
-tool, not a marketing dashboard.
+**Aesthetic:** Quiet command center. The product should feel calm, exact,
+accountable, and built for repeated engineering work. The requested visual
+replacement is minimal and Apple-inspired in clarity, hierarchy, spacing, and
+interaction quality without copying Apple branding or promotional chrome. It
+is an operational tool, not a marketing dashboard.
 
 Avoid glossy AI spectacle, oversized headlines, decorative gradients, floating
-cards, excessive rounding, and animated agent avatars.
+cards, excessive rounding, repeated status pills, nested panels, and animated
+agent avatars.
 
 ## Design goals
 
@@ -227,10 +230,12 @@ does not delete history.
 
 ### Typography
 
-- UI: Instrument Sans
-- Code and identifiers: Azeret Mono
-- Fallbacks: system sans and system monospace
+- UI: native system UI sans with Segoe UI fallback
+- Code and identifiers: SF Mono where available, then Consolas and system
+  monospace
 - Letter spacing: `0`
+- Sentence case for headings and controls; uppercase only for literal
+  identifiers such as AP-001
 
 Use compact headings in work surfaces. Reserve large display text for the
 project name in an empty or onboarding state, not every page.
@@ -239,36 +244,39 @@ project name in an empty or onboarding state, not every page.
 
 | Token | Value | Use |
 |---|---|---|
-| Canvas | `#F5F2EA` | App background |
-| Surface | `#FFFCF6` | Tools and repeated item backgrounds |
-| Ink | `#17231D` | Primary text and navigation |
-| Muted | `#58625C` | Secondary text |
-| Rail | `#17231D` | Main navigation |
-| Signal cyan | `#007F82` | Active process and selected states |
-| Barrier coral | `#B94332` | Blocking findings and destructive outcomes |
-| Review gold | `#9A6800` | Pending review and uncertainty |
-| Verified moss | `#547128` | Verified outcomes |
-| Rule | `#D7D2C5` | Dividers and boundaries |
-| Focus | `#005FCC` | Keyboard focus ring |
+| Canvas | `#F5F5F7` | App background |
+| Surface | `#FFFFFF` | Primary work surfaces |
+| Surface subtle | `#FBFBFD` | Secondary regions and loading scaffolds |
+| Ink | `#1D1D1F` | Primary text and navigation |
+| Muted | `#6E6E73` | Secondary text |
+| Rule | `#D2D2D7` | Dividers and boundaries |
+| Operational blue | `#0066CC` | Primary action, selection, and links |
+| Barrier red | `#B42318` | Blocking findings and destructive outcomes |
+| Review amber | `#946200` | Pending review and uncertainty |
+| Verified green | `#1F7A45` | Verified outcomes |
+| Focus | `#0066CC` | Keyboard focus ring |
 
 Color never carries state alone. Pair it with icons, text, patterns, or border
 styles. Verify text and component contrast against WCAG 2.2 AA.
 
 ### Geometry
 
-- 8px spacing rhythm
-- Maximum general radius: 6px
+- 4/8/12/16/24/32/48px spacing rhythm
+- Maximum general radius: 8px
 - 1px dividers for dense work areas
 - 3px visible focus outline
 - Stable icon button sizes
 - Cards only for repeated findings, modal dialogs, and discrete report items
 - No cards nested inside cards
+- Circular geometry only for annotations, progress position, and native radio
+  controls
 
 ### Motion
 
-- 140-180ms state transitions
+- 160-220ms state transitions
 - No continuous decorative movement
 - Progress animation stops in paused or failed states
+- Route transitions use a subtle opacity change and at most 8px of movement
 - Respect `prefers-reduced-motion`
 
 ## Component inventory
@@ -361,10 +369,10 @@ Do not announce high-frequency token or log events through live regions.
 
 | Width | Layout |
 |---|---|
-| 1440px and above | Full rail and three-pane workspaces |
-| 1024-1439px | Collapsible rail and resizable two/three-pane layout |
+| 1440px and above | Full rail, contextual header, and three-pane workspaces |
+| 1024-1439px | Compact rail and resizable two/three-pane layout |
 | 768-1023px | Tabbed evidence/findings/timeline; linear Barrier Map default |
-| Below 768px | Stacked flow, full-screen diff, persistent bottom actions |
+| Below 768px | Bottom navigation, stacked flow, full-screen diff, persistent actions |
 
 Fixed-format elements must use stable dimensions or responsive constraints so
 status text, icons, and dynamic output do not shift the layout.

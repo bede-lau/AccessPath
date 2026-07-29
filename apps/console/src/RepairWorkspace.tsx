@@ -305,6 +305,9 @@ function RepairCommandBar({
           <ArrowLeft aria-hidden="true" />
           Barrier Map
         </button>
+        <p className="route-breadcrumb">
+          Isolated local repair / {repair.repository.repositoryDisplayName}
+        </p>
         <h1>Repair workspace</h1>
       </div>
       <div className="command-actions">
@@ -398,6 +401,9 @@ export function RepairWorkspace({
   const [busy, setBusy] = useState(false);
   const [rewindPreview, setRewindPreview] = useState<RewindPreview>();
   const [selectedPath, setSelectedPath] = useState<string>();
+  const [mobilePane, setMobilePane] = useState<
+    "evidence" | "diff" | "verification"
+  >("diff");
   const lastEventId = useRef<string | undefined>(undefined);
   const refreshSequence = useRef(0);
 
@@ -474,6 +480,7 @@ export function RepairWorkspace({
           (event) => {
             lastEventId.current = event.eventId;
             setConnection("connected");
+            setError(null);
             setEvents((current) =>
               current.some((item) => item.eventId === event.eventId)
                 ? current
@@ -488,6 +495,7 @@ export function RepairWorkspace({
           controller.signal,
         );
         const latest = await refresh();
+        setError(null);
         if (!TERMINAL_REPAIR_STATES.has(latest.repair.state)) {
           throw new ApiError(502, "The repair event stream closed unexpectedly.");
         }
@@ -591,14 +599,27 @@ export function RepairWorkspace({
 
   if (resource === undefined) {
     return (
-      <main id="main-content" className="empty-route" tabIndex={-1}>
+      <main
+        id="main-content"
+        className={`empty-route ${error === null ? "route-loading" : ""}`}
+        tabIndex={-1}
+      >
         {error === null ? (
-          <LoaderCircle className="spin" aria-hidden="true" />
+          <div className="loading-mark" aria-hidden="true">
+            <img src="/accesspath-mark.png" alt="" />
+          </div>
         ) : (
           <TriangleAlert aria-hidden="true" />
         )}
         <h1>{error === null ? "Loading repair workspace" : "Repair unavailable"}</h1>
         <p>{error ?? "Reading the durable local repair session."}</p>
+        {error === null && (
+          <div className="loading-scaffold" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+        )}
       </main>
     );
   }
@@ -636,7 +657,8 @@ export function RepairWorkspace({
         </StatusPill>
       </div>
 
-      {connection !== "connected" && (
+      {connection !== "connected" &&
+        !TERMINAL_REPAIR_STATES.has(resource.repair.state) && (
         <div className="repair-connection" role="status" aria-live="polite">
           {connection === "disconnected" ? (
             <WifiOff aria-hidden="true" />
@@ -647,11 +669,32 @@ export function RepairWorkspace({
             ? "Live repair updates are disconnected. Durable evidence remains visible."
             : "Reconnecting to durable repair events."}
         </div>
-      )}
+        )}
       {error !== null && (
         <div className="global-alert" role="alert">
           <TriangleAlert aria-hidden="true" />
           <span>{error}</span>
+        </div>
+      )}
+      {TERMINAL_REPAIR_STATES.has(resource.repair.state) && (
+        <div
+          className="terminal-notice"
+          role="status"
+          data-status={resource.repair.state}
+        >
+          {resource.repair.state === "completed" ? (
+            <Check aria-hidden="true" />
+          ) : (
+            <TriangleAlert aria-hidden="true" />
+          )}
+          <div>
+            <strong>{repairStateLabel(resource.repair.state)} repair</strong>
+            <p>
+              {resource.repair.state === "completed"
+                ? "Verification evidence and exports are preserved. The isolated worktree remains separate from the unchanged base checkout."
+                : "Durable events, approvals, and any verified diff remain available for review. The base checkout was not edited."}
+            </p>
+          </div>
         </div>
       )}
       {pendingApproval !== undefined && (
@@ -663,8 +706,28 @@ export function RepairWorkspace({
         />
       )}
 
+      <div className="mobile-pane-switcher" aria-label="Repair workspace view">
+        {(["evidence", "diff", "verification"] as const).map((pane) => (
+          <button
+            type="button"
+            key={pane}
+            aria-pressed={mobilePane === pane}
+            onClick={() => setMobilePane(pane)}
+          >
+            {pane === "evidence"
+              ? "Evidence"
+              : pane === "diff"
+                ? "Diff"
+                : "Verification"}
+          </button>
+        ))}
+      </div>
       <div className="repair-workspace">
-        <section className="repair-evidence-pane" aria-labelledby="repair-brief-heading">
+        <section
+          className="repair-evidence-pane"
+          aria-labelledby="repair-brief-heading"
+          data-mobile-visible={mobilePane === "evidence"}
+        >
           <header>
             <p className="eyebrow">Bounded evidence brief</p>
             <h2 id="repair-brief-heading">
@@ -701,7 +764,11 @@ export function RepairWorkspace({
           </div>
         </section>
 
-        <section className="repair-diff-pane" aria-labelledby="repair-diff-heading">
+        <section
+          className="repair-diff-pane"
+          aria-labelledby="repair-diff-heading"
+          data-mobile-visible={mobilePane === "diff"}
+        >
           <header>
             <div>
               <p className="eyebrow">Git-authoritative worktree diff</p>
@@ -757,7 +824,11 @@ export function RepairWorkspace({
           )}
         </section>
 
-        <aside className="repair-ledger-pane" aria-labelledby="verification-ledger-heading">
+        <aside
+          className="repair-ledger-pane"
+          aria-labelledby="verification-ledger-heading"
+          data-mobile-visible={mobilePane === "verification"}
+        >
           <section>
             <header>
               <p className="eyebrow">Verification ledger</p>

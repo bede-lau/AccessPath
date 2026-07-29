@@ -43,12 +43,15 @@ npm run dev
 Confirm:
 
 - console, companion, and fixture health checks pass
-- Qoder authentication is valid
+- the deterministic mock-backed vertical slice passes
 - browser and terminal zoom are readable on the display
 - base repository is clean
 - fallback report, diff, tests, and video are present
 - notifications are disabled
 - no tokens or personal paths are visible
+
+Live Qoder authentication is optional for this demo. Validate it separately
+with `npm run test:qoder:live` only when credentials are available.
 
 Keep the AccessPath console on the audit setup screen.
 
@@ -77,7 +80,7 @@ that no repository is attached.
 
 ### 2. Run the URL audit
 
-Click `Run audit`.
+Click `Run reviewed audit`.
 
 As the step rail advances, say:
 
@@ -110,7 +113,8 @@ Say:
 
 ### 4. Start local repair
 
-Click `Repair in local workspace`.
+Select `repair`, enter the absolute path ending in `apps\demo-aid-app`, and
+click `Attach and create repair`.
 
 Show:
 
@@ -120,8 +124,8 @@ Show:
 - allowed path scope
 - configured tests
 
-Approve the read-only diagnosis. When the plan appears, point to its affected
-files and non-goals, then click `Approve plan`.
+Click `Prepare worktree`, then `Run diagnosis`. When the plan appears, point
+to its affected files and non-goals, then click `Approve once`.
 
 Say:
 
@@ -130,7 +134,8 @@ Say:
 
 ### 5. Show Qoder activity
 
-Let the timeline advance through Diagnose, Edit, and Verify.
+Click `Start repair`, then approve each of the two bounded file edits with
+`Approve once`. Let the timeline advance through Diagnose, Edit, and Verify.
 
 Show one permission request or policy decision. Keep the raw log collapsed
 unless a judge asks.
@@ -171,8 +176,8 @@ Open the evidence report summary and show:
 - residual findings
 - Qoder provenance
 
-Open `Rewind preview`, show the affected files and side-effect warning, then
-cancel the dialog so the verified state remains.
+Open `Preview rewind`, show the affected files and side-effect warning, then
+leave the verified state intact for the close.
 
 Final line:
 

@@ -32,6 +32,8 @@ Thumbs.db
 
 # Local Codex/OMX runtime state
 .omx/
+.agents/
+.codex/
 
 # NOTE: package-lock.json is intentionally NOT ignored — it must be committed
 # for reproducible installs.

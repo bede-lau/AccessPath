@@ -1,3 +1,11 @@
+/*
+THESIS: AccessPath is a quiet command center where evidence, not chrome, owns the screen.
+OWN-WORLD: Cool neutral surfaces, graphite type, operational blue, thin rules, compact controls.
+STORY: Define a task, observe the barrier, approve bounded repair, verify, and export.
+FIRST VIEWPORT: Compact rail, contextual command header, source list, work surface, inspector.
+FORM: Approved Option A, Source List Command Center, adapted across every console route.
+*/
+
 import type {
   AccessPathEvent,
   ArtifactRef,
@@ -191,10 +199,12 @@ function AppRail({
   view,
   auditId,
   repairId,
+  connection,
 }: {
   view: View;
   auditId?: string;
   repairId?: string;
+  connection: ConnectionState;
 }) {
   const items = [
     { label: "Projects", icon: Archive, enabled: true, view: "setup" as View },
@@ -211,12 +221,11 @@ function AppRail({
       enabled: repairId !== undefined,
       view: "repair" as View,
     },
-    { label: "Evidence", icon: FileText, enabled: auditId !== undefined },
   ];
   return (
     <aside className="app-rail" aria-label="Application">
       <div className="brand-mark" aria-label="AccessPath">
-        <span aria-hidden="true">AP</span>
+        <img src="/accesspath-mark.png" alt="" aria-hidden="true" />
         <strong>AccessPath</strong>
       </div>
       <nav aria-label="Primary">
@@ -236,7 +245,7 @@ function AppRail({
                   navigate(`/audits/${auditId}/live`);
                 } else if (
                   auditId !== undefined &&
-                  (item.view === "barrier-map" || item.label === "Evidence")
+                  item.view === "barrier-map"
                 ) {
                   navigate(`/audits/${auditId}/barrier-map`);
                 } else if (repairId !== undefined && item.view === "repair") {
@@ -250,63 +259,25 @@ function AppRail({
           );
         })}
       </nav>
-      <div className="rail-status">
-        <ShieldCheck aria-hidden="true" />
-        <span>Local companion</span>
-      </div>
-    </aside>
-  );
-}
-
-function Header({
-  session,
-  repair,
-  connection,
-}: {
-  session?: AuditSession;
-  repair?: RepairSession;
-  connection: ConnectionState;
-}) {
-  return (
-    <header className="topbar">
-      <div>
-        <p className="eyebrow">
-          {repair === undefined
-            ? "Emergency aid demo project"
-            : "Isolated local repair plane"}
-        </p>
-        <p className="topbar-title">
-          {repair === undefined
-            ? session?.task.title ?? "New critical-path audit"
-            : `${repair.repository.repositoryDisplayName} / ${repair.branch}`}
-        </p>
-      </div>
-      <div className="topbar-status">
-        {session !== undefined && (
-          <StatusBadge
-            state={session.state}
-            label={statusCopy(session.state)}
-          />
+      <div className="rail-status" data-connection={connection}>
+        {connection === "disconnected" ? (
+          <WifiOff aria-hidden="true" />
+        ) : (
+          <ShieldCheck aria-hidden="true" />
         )}
-        {repair !== undefined && (
-          <StatusBadge
-            state={repair.state}
-            label={repair.state.replaceAll("-", " ")}
-          />
-        )}
-        <span
-          className="connection-indicator"
-          data-connection={connection}
-        >
-          {connection === "disconnected" ? (
-            <WifiOff aria-hidden="true" />
-          ) : (
-            <Network aria-hidden="true" />
-          )}
-          {connection === "idle" ? "Ready" : connection}
+        <span>
+          {connection === "connected"
+            ? "Local ready"
+            : connection === "reconnecting"
+              ? "Reconnecting"
+              : connection === "connecting"
+                ? "Connecting"
+                : connection === "disconnected"
+                  ? "Disconnected"
+                  : "Local companion"}
         </span>
       </div>
-    </header>
+    </aside>
   );
 }
 
@@ -382,7 +353,7 @@ function AuditSetup({
     <main id="main-content" className="setup-page" tabIndex={-1}>
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Audit setup</p>
+          <p className="route-breadcrumb">Emergency aid demo / New audit</p>
           <h1>Review the critical path</h1>
           <p>
             Run one deterministic keyboard journey and preserve the evidence
@@ -697,18 +668,25 @@ function EvidenceStage({
   step,
   findings,
   sessionId,
+  mobileVisible,
 }: {
   step?: TaskStepResult;
   findings: Finding[];
   sessionId: string;
+  mobileVisible: boolean;
 }) {
   const screenshot = step?.evidence.find((item) => item.kind === "screenshot");
   const imageUrl = useArtifactUrl(screenshot, sessionId);
   return (
-    <section className="evidence-stage" aria-labelledby="evidence-heading">
+    <section
+      className="evidence-stage"
+      aria-labelledby="evidence-heading"
+      data-mobile-visible={mobileVisible}
+      tabIndex={0}
+    >
       <header>
         <div>
-          <p className="eyebrow">Evidence stage</p>
+          <p className="eyebrow">Selected evidence</p>
           <h2 id="evidence-heading">{step?.intent ?? "Waiting for first checkpoint"}</h2>
         </div>
         {step !== undefined && <StatusBadge state={step.state} />}
@@ -723,6 +701,11 @@ function EvidenceStage({
               {step === undefined ? "Observing the reviewed task" : "Screenshot loading"}
             </strong>
             <span>Persisted evidence appears here at each checkpoint.</span>
+            <div className="stage-skeleton" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
           </div>
         )}
         {findings.map((finding, index) => (
@@ -761,17 +744,23 @@ function FindingsQueue({
   findings,
   selectedId,
   onSelect,
+  mobileVisible,
 }: {
   findings: Finding[];
   selectedId?: string;
   onSelect: (finding: Finding) => void;
+  mobileVisible: boolean;
 }) {
   return (
-    <aside className="findings-queue" aria-labelledby="findings-heading">
+    <aside
+      className="findings-queue"
+      aria-labelledby="findings-heading"
+      data-mobile-visible={mobileVisible}
+    >
       <header>
         <div>
-          <p className="eyebrow">Affected actions</p>
-          <h2 id="findings-heading">Findings queue</h2>
+          <p className="eyebrow">Audit evidence</p>
+          <h2 id="findings-heading">Affected actions</h2>
         </div>
         <span className="count-label">{findings.length}</span>
       </header>
@@ -840,6 +829,9 @@ function LiveWorkspace({
   const [selectedStepId, setSelectedStepId] = useState(
     steps.find((step) => step.state !== "queued")?.id ?? steps[0]?.id,
   );
+  const [mobilePane, setMobilePane] = useState<
+    "path" | "evidence" | "findings"
+  >("evidence");
   const selectedStep =
     steps.find((step) => step.id === selectedStepId)?.result ??
     [...steps].reverse().find((step) => step.result !== undefined)?.result;
@@ -862,9 +854,24 @@ function LiveWorkspace({
             <ArrowLeft aria-hidden="true" />
             Audits
           </button>
+          <p className="route-breadcrumb">
+            Emergency aid demo / {session.id}
+          </p>
           <h1>Live audit workspace</h1>
         </div>
         <div className="command-actions">
+          <StatusBadge
+            state={session.state}
+            label={statusCopy(session.state)}
+          />
+          <span className="connection-indicator" data-connection={connection}>
+            {connection === "disconnected" ? (
+              <WifiOff aria-hidden="true" />
+            ) : (
+              <Network aria-hidden="true" />
+            )}
+            {connection === "connected" ? "Companion connected" : connection}
+          </span>
           {session.state === "running" && (
             <button type="button" onClick={() => void onPause()} disabled={busy}>
               <CirclePause aria-hidden="true" />
@@ -889,7 +896,11 @@ function LiveWorkspace({
             </button>
           )}
           {bundle !== undefined && (
-            <button type="button" onClick={() => onOpenMap()}>
+            <button
+              type="button"
+              className="primary-inline-command"
+              onClick={() => onOpenMap()}
+            >
               <MapIcon aria-hidden="true" />
               Open Barrier Map
             </button>
@@ -897,23 +908,50 @@ function LiveWorkspace({
         </div>
       </div>
       <ConnectionNotice connection={connection} stale={stale} />
-      {(session.state === "failed" || session.state === "cancelled") && (
-        <div className="terminal-notice" role="status">
+      {(session.state === "blocked" ||
+        session.state === "failed" ||
+        session.state === "cancelled") && (
+        <div
+          className="terminal-notice"
+          role="status"
+          data-status={session.state}
+        >
           <AlertTriangle aria-hidden="true" />
           <div>
             <strong>{statusCopy(session.state)} audit</strong>
             <p>
-              Captured steps and artifacts remain available. Start a new audit
-              when the target is ready.
+              {session.state === "blocked"
+                ? "The reviewed path preserved its blocked action and downstream evidence. Open the Barrier Map to inspect and repair it."
+                : "Captured steps and artifacts remain available. Start a new audit when the target is ready."}
             </p>
           </div>
         </div>
       )}
+      <div className="mobile-pane-switcher" aria-label="Audit workspace view">
+        {(["path", "evidence", "findings"] as const).map((pane) => (
+          <button
+            type="button"
+            key={pane}
+            aria-pressed={mobilePane === pane}
+            onClick={() => setMobilePane(pane)}
+          >
+            {pane === "path"
+              ? "Task path"
+              : pane === "evidence"
+                ? "Evidence"
+                : `Findings ${findings.length}`}
+          </button>
+        ))}
+      </div>
       <div className="live-workspace">
-        <nav className="path-rail" aria-label="Reviewed task path">
+        <nav
+          className="path-rail"
+          aria-label="Reviewed task path"
+          data-mobile-visible={mobilePane === "path"}
+        >
           <div className="pane-heading">
-            <p className="eyebrow">Task path</p>
-            <h2>Reviewed task steps</h2>
+            <p className="eyebrow">Chronological actions</p>
+            <h2>Task path</h2>
           </div>
           <ol>
             {steps.map((step, index) => (
@@ -921,7 +959,10 @@ function LiveWorkspace({
                 <button
                   type="button"
                   aria-current={selectedStepId === step.id ? "step" : undefined}
-                  onClick={() => setSelectedStepId(step.id)}
+                  onClick={() => {
+                    setSelectedStepId(step.id);
+                    setMobilePane("evidence");
+                  }}
                 >
                   <span className="path-index">{index + 1}</span>
                   <span>
@@ -946,10 +987,12 @@ function LiveWorkspace({
           step={selectedStep}
           findings={selectedFindings}
           sessionId={session.id}
+          mobileVisible={mobilePane === "evidence"}
         />
         <FindingsQueue
           findings={findings}
           onSelect={(finding) => onOpenMap(finding)}
+          mobileVisible={mobilePane === "findings"}
         />
       </div>
     </main>
@@ -978,7 +1021,7 @@ function FindingDetail({
         <h3>Observed</h3>
         <p>{finding.observation}</p>
         <p className="source-label">
-          {finding.evidenceLabel} · {finding.source}
+          {finding.evidenceLabel} / {finding.source}
         </p>
       </div>
       <div className="detail-section">
@@ -1069,6 +1112,9 @@ function BarrierMapView({
             <ArrowLeft aria-hidden="true" />
             Live audit
           </button>
+          <p className="route-breadcrumb">
+            Emergency aid demo / Audit evidence
+          </p>
           <h1>Barrier Map</h1>
           <p>
             Human actions, attempted transitions, and the evidence attached to
@@ -1267,7 +1313,7 @@ function BarrierMapView({
 export function App() {
   const [view, setView] = useState<View>(() => inferView(window.location.pathname));
   const [session, setSession] = useState<AuditSession>();
-  const [repairSession, setRepairSession] = useState<RepairSession>();
+  const [, setRepairSession] = useState<RepairSession>();
   const [bundle, setBundle] = useState<AuditBundle>();
   const [events, setEvents] = useState<AccessPathEvent<Record<string, unknown>>[]>([]);
   const [connection, setConnection] = useState<ConnectionState>("idle");
@@ -1368,6 +1414,7 @@ export function App() {
           (event) => {
             lastEventId.current = event.eventId;
             setConnection("connected");
+            setError(null);
             setEvents((current) =>
               current.some((item) => item.eventId === event.eventId)
                 ? current
@@ -1386,6 +1433,7 @@ export function App() {
         );
         const latest = await getAudit(session.id);
         setSession(latest);
+        setError(null);
         if (TERMINAL_STATES.has(latest.state)) {
           await refreshBundle(session.id);
         } else {
@@ -1537,74 +1585,83 @@ export function App() {
         view={view}
         auditId={session?.id}
         repairId={repairIdFromPath(window.location.pathname)}
+        connection={connection}
       />
       <div className="app-body">
-        <Header
-          session={session}
-          repair={repairSession}
-          connection={connection}
-        />
         {error !== null && view !== "setup" && (
           <div className="global-alert" role="alert">
             <TriangleAlert aria-hidden="true" />
             <span>{error}</span>
           </div>
         )}
-        {view === "setup" && (
-          <AuditSetup
-            busy={busy}
-            error={error}
-            connection={connection}
-            demoAidAppPort={demoAidAppPort}
-            onRun={run}
-          />
-        )}
-        {view === "live" && session !== undefined && (
-          <LiveWorkspace
-            session={session}
-            bundle={bundle}
-            events={events}
-            connection={connection}
-            busy={busy}
-            onPause={() => transition(pauseAudit)}
-            onResume={() => transition(resumeAudit)}
-            onCancel={() => transition(cancelAudit)}
-            onOpenMap={openMap}
-          />
-        )}
-        {view === "live" && session === undefined && (
-          <main id="main-content" className="empty-route" tabIndex={-1}>
-            <LoaderCircle className="spin" aria-hidden="true" />
-            <h1>Loading audit</h1>
-            <p>Open an audit from the setup workspace.</p>
-          </main>
-        )}
-        {view === "barrier-map" && bundle !== undefined && (
-          <BarrierMapView
-            bundle={bundle}
-            initialFindingId={initialFindingId}
-            onBack={() => session !== undefined && navigate(`/audits/${session.id}/live`)}
-            onCreateRepair={createRepairFromFinding}
-          />
-        )}
-        {view === "barrier-map" && bundle === undefined && (
-          <main id="main-content" className="empty-route" tabIndex={-1}>
-            <MapIcon aria-hidden="true" />
-            <h1>No persisted Barrier Map yet</h1>
-            <p>Complete or partially complete an audit before opening this view.</p>
-            <button type="button" onClick={() => navigate("/projects/demo/audits/new")}>
-              <ArrowLeft aria-hidden="true" />
-              Return to audit setup
-            </button>
-          </main>
-        )}
-        {view === "repair" &&
-          repairIdFromPath(window.location.pathname) !== undefined && (
-            <RepairWorkspace
-              repairId={repairIdFromPath(window.location.pathname)!}
-              onRepairChange={setRepairSession}
+        <div className="route-transition" key={view}>
+          {view === "setup" && (
+            <AuditSetup
+              busy={busy}
+              error={error}
+              connection={connection}
+              demoAidAppPort={demoAidAppPort}
+              onRun={run}
             />
           )}
+          {view === "live" && session !== undefined && (
+            <LiveWorkspace
+              session={session}
+              bundle={bundle}
+              events={events}
+              connection={connection}
+              busy={busy}
+              onPause={() => transition(pauseAudit)}
+              onResume={() => transition(resumeAudit)}
+              onCancel={() => transition(cancelAudit)}
+              onOpenMap={openMap}
+            />
+          )}
+          {view === "live" && session === undefined && (
+            <main
+              id="main-content"
+              className="empty-route route-loading"
+              tabIndex={-1}
+            >
+              <div className="loading-mark" aria-hidden="true">
+                <img src="/accesspath-mark.png" alt="" />
+              </div>
+              <h1>Loading audit</h1>
+              <p>Reading the durable audit session and captured evidence.</p>
+              <div className="loading-scaffold" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
+            </main>
+          )}
+          {view === "barrier-map" && bundle !== undefined && (
+            <BarrierMapView
+              bundle={bundle}
+              initialFindingId={initialFindingId}
+              onBack={() => session !== undefined && navigate(`/audits/${session.id}/live`)}
+              onCreateRepair={createRepairFromFinding}
+            />
+          )}
+          {view === "barrier-map" && bundle === undefined && (
+            <main id="main-content" className="empty-route" tabIndex={-1}>
+              <MapIcon aria-hidden="true" />
+              <h1>No persisted Barrier Map yet</h1>
+              <p>Complete or partially complete an audit before opening this view.</p>
+              <button type="button" onClick={() => navigate("/projects/demo/audits/new")}>
+                <ArrowLeft aria-hidden="true" />
+                Return to audit setup
+              </button>
+            </main>
+          )}
+          {view === "repair" &&
+            repairIdFromPath(window.location.pathname) !== undefined && (
+              <RepairWorkspace
+                repairId={repairIdFromPath(window.location.pathname)!}
+                onRepairChange={setRepairSession}
+              />
+            )}
+        </div>
       </div>
       <div className="visually-hidden" aria-live="polite" aria-atomic="true">
         {view === "repair" || session === undefined
