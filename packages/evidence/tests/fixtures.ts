@@ -77,7 +77,7 @@ export function bundle(
           checkpoint: true,
         },
       ],
-      fixtureValues: { applicantName: "Fictional Person" },
+      fixtureValues: { applicantName: "Jordan Example" },
       viewport: { width: 1280, height: 720 },
       timeoutMs: 30_000,
     },

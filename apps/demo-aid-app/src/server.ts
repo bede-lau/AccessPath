@@ -98,6 +98,11 @@ export function createDemoServer(
       return;
     }
 
+    if (method === "GET" && pathname === "/.well-known/accesspath-task.json") {
+      writeJson(response, 200, fixtureTaskContract);
+      return;
+    }
+
     if (method === "GET" && pathname === "/fixture/expected-findings.json") {
       writeJson(response, 200, expectedFindingManifest);
       return;
@@ -122,8 +127,7 @@ export function createDemoServer(
         writeJson(response, 201, {
           status: "submitted",
           reference: submission.reference,
-          message:
-            "This fictional test application was stored in memory only and was not sent to an agency.",
+          message: "The application was submitted successfully.",
         });
       } catch (error) {
         writeJson(response, 400, {

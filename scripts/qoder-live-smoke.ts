@@ -15,8 +15,12 @@ import {
   prepareWorkspace,
 } from "@accesspath/git-workspace";
 import {
-  OfficialQoderAdapter,
+  createAgentAdapter,
   redactRunnerText,
+  resolveAgentProvider,
+  resolveOpenAiConfiguration,
+  resolveQwenConfiguration,
+  planTaskContract,
   startRepairSession,
   type RepairSessionHandle,
   type RunnerEvent,
@@ -25,10 +29,10 @@ import {
 import { qoderAuthAvailability } from "../apps/companion/src/qoder-auth";
 
 const execute = promisify(execFile);
-const smokeRoot = join(homedir(), ".accesspath", "qoder-live-smoke");
+const smokeRoot = join(homedir(), ".accesspath", "agent-live-smoke");
 const repositoryRoot = join(smokeRoot, "repository");
 const artifactRoot = join(smokeRoot, "artifacts");
-const repairId = "repair-qoder-live-smoke";
+const repairId = "repair-agent-live-smoke";
 let workspace:
   | Awaited<ReturnType<typeof prepareWorkspace>>
   | undefined;
@@ -51,7 +55,7 @@ async function withTimeout<Value>(
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
           void handle.interrupt();
-          reject(new Error("The live Qoder smoke turn timed out."));
+          reject(new Error("The live agent smoke turn timed out."));
         }, milliseconds);
       }),
     ]);
@@ -76,7 +80,42 @@ async function cleanup(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const authentication = await qoderAuthAvailability();
+  const fullSmoke = process.env.ACCESSPATH_AGENT_FULL_SMOKE === "1";
+  const providerArgument = process.argv.indexOf("--provider");
+  const requestedProvider =
+    providerArgument >= 0 ? process.argv[providerArgument + 1] : undefined;
+  const environment = {
+    ...process.env,
+    ...(requestedProvider === undefined
+      ? {}
+      : { AGENT_PROVIDER: requestedProvider }),
+  };
+  const provider = resolveAgentProvider(environment);
+  if (provider === "mock") {
+    throw new Error("The live smoke requires openai, qoder, or qwen, not mock.");
+  }
+  const authentication =
+    provider === "qoder"
+      ? await qoderAuthAvailability()
+      : provider === "openai"
+        ? (() => {
+          const openai = resolveOpenAiConfiguration(environment);
+          return {
+            available: true,
+            model: openai.model,
+            sdkVersion: "responses-api",
+            strategy: "api-key" as const,
+          };
+          })()
+        : (() => {
+            const qwen = resolveQwenConfiguration(environment);
+            return {
+              available: true,
+              model: qwen.model,
+              sdkVersion: "0.1.8",
+              strategy: "api-key" as const,
+            };
+          })();
   if (!authentication.available || authentication.strategy === undefined) {
     console.error(
       "Qoder live smoke skipped: configure QODER_PERSONAL_ACCESS_TOKEN or sign in with qodercli.",
@@ -99,7 +138,7 @@ async function main(): Promise<void> {
     { cwd: repositoryRoot },
   );
   await execute("git", ["add", "."], { cwd: repositoryRoot });
-  await execute("git", ["commit", "-m", "Create Qoder live smoke fixture"], {
+  await execute("git", ["commit", "-m", "Create agent live smoke fixture"], {
     cwd: repositoryRoot,
   });
   const baseCommit = await git(["rev-parse", "HEAD"]);
@@ -123,8 +162,8 @@ async function main(): Promise<void> {
   });
   const manifest = RepairManifestSchema.parse({
     schemaVersion: "1.0.0",
-    id: "manifest-qoder-live-smoke",
-    auditBundleId: "bundle-qoder-live-smoke",
+    id: "manifest-agent-live-smoke",
+    auditBundleId: "bundle-agent-live-smoke",
     findingIds: ["AP-LIVE-001"],
     affectedActions: ["Change the disposable message fixture"],
     observations: [
@@ -137,11 +176,12 @@ async function main(): Promise<void> {
     ],
     nonGoals: ["Do not run commands or access the network."],
     allowedPathGlobs: ["src/message.txt"],
+    readPathGlobs: ["src/message.txt"],
     verification: {
       taskContract: {
         schemaVersion: "1.0.0",
-        id: "task-qoder-live-smoke",
-        title: "Qoder live smoke",
+        id: "task-agent-live-smoke",
+        title: "Agent live smoke",
         goal: "Exercise one bounded disposable edit.",
         startUrl: "http://127.0.0.1:4174/",
         targetPolicy: "local-explicit",
@@ -169,45 +209,83 @@ async function main(): Promise<void> {
   const events: RunnerEvent[] = [];
   const emit = (event: RunnerEvent) => {
     events.push(event);
+    if (
+      process.env.ACCESSPATH_AGENT_SMOKE_DEBUG === "1" &&
+      event.type !== "agent.message.delta"
+    ) {
+      console.log(
+        `[agent-smoke:${event.type}] ${JSON.stringify(event.payload)}`,
+      );
+    }
   };
 
-  const diagnosis = await startRepairSession({
-    adapter: new OfficialQoderAdapter(),
-    artifactRoot,
-    authStrategy: authentication.strategy,
-    emit,
-    manifest,
-    mode: "diagnosis",
-    repairSessionId: repairId,
-    requestApproval: async () => ({ decision: "deny" }),
-    worktreePath: workspace.worktreePath,
-  });
-  handles.push(diagnosis);
-  const diagnosisResult = await withTimeout(diagnosis.turn, diagnosis);
-  if (
-    !events.some(
-      (event) =>
-        event.type === "agent.message.completed" &&
-        typeof event.payload.text === "string",
-    )
-  ) {
-    throw new Error("The live diagnosis produced no user-facing streamed message.");
+  let approvedPlan =
+    'Replace the exact text "before" in src/message.txt with "after".';
+  let qoderSessionId: string | undefined;
+  const adapter = createAgentAdapter({ artifactRoot, environment });
+  if (fullSmoke) {
+    const planning = await planTaskContract({
+      adapter,
+      emit,
+      objective:
+        "Confirm that the disposable local fixture can be reviewed before its approved source repair.",
+      reconnaissance: {
+        availableActions: [{ key: "Enter", kind: "press" }],
+        expectedVisibleText: ["before"],
+        startUrl: "http://127.0.0.1:4174/",
+        targetPolicy: "local-explicit",
+      },
+    });
+    if (
+      planning.task.expectedSteps.length === 0 ||
+      planning.task.startUrl !== "http://127.0.0.1:4174/"
+    ) {
+      throw new Error(
+        "The live mission planner did not return a usable disposable task contract.",
+      );
+    }
+    const diagnosis = await startRepairSession({
+      adapter,
+      artifactRoot,
+      emit,
+      manifest,
+      mode: "diagnosis",
+      repairSessionId: repairId,
+      requestApproval: async () => ({ decision: "deny" }),
+      worktreePath: workspace.worktreePath,
+    });
+    handles.push(diagnosis);
+    const diagnosisResult = await withTimeout(diagnosis.turn, diagnosis);
+    if (
+      !events.some(
+        (event) =>
+          event.type === "agent.message.completed" &&
+          typeof event.payload.text === "string",
+      )
+    ) {
+      throw new Error(
+        "The live diagnosis produced no user-facing streamed message.",
+      );
+    }
+    approvedPlan = `${diagnosisResult.result}
+
+${approvedPlan}`;
+    qoderSessionId = diagnosisResult.qoderSessionId;
+    await diagnosis.close();
+    await diagnosis.closed;
+    handles.splice(handles.indexOf(diagnosis), 1);
   }
-  await diagnosis.close();
-  await diagnosis.closed;
-  handles.splice(handles.indexOf(diagnosis), 1);
 
   const repair = await startRepairSession({
-    adapter: new OfficialQoderAdapter(),
-    approvedPlan: `${diagnosisResult.result}
-
-Replace the exact text "before" in src/message.txt with "after".`,
+    adapter,
+    approvedPlan,
     artifactRoot,
-    authStrategy: authentication.strategy,
     emit,
     manifest,
     mode: "repair",
+    qoderSessionId,
     repairSessionId: repairId,
+    resume: qoderSessionId !== undefined,
     requestApproval: async (request) =>
       request.kind === "tool" &&
       request.targetPaths.length === 1 &&
@@ -229,24 +307,6 @@ Replace the exact text "before" in src/message.txt with "after".`,
     throw new Error("The base checkout changed during the live repair.");
   }
 
-  const interrupted = await startRepairSession({
-    adapter: new OfficialQoderAdapter(),
-    artifactRoot,
-    authStrategy: authentication.strategy,
-    emit,
-    manifest,
-    mode: "diagnosis",
-    repairSessionId: repairId,
-    requestApproval: async () => ({ decision: "deny" }),
-    worktreePath: workspace.worktreePath,
-  });
-  handles.push(interrupted);
-  await interrupted.interrupt();
-  await interrupted.turn.catch(() => undefined);
-  await interrupted.close();
-  await interrupted.closed.catch(() => undefined);
-  handles.splice(handles.indexOf(interrupted), 1);
-
   const preview = await repair.rewindFiles({ dryRun: true });
   if (!preview.canRewind || !preview.filesChanged?.includes("src/message.txt")) {
     throw new Error("The live rewind preview did not include the approved edit.");
@@ -258,9 +318,12 @@ Replace the exact text "before" in src/message.txt with "after".`,
   await assertBaseIntegrity(workspace);
 
   const serializedEvents = JSON.stringify(events);
-  const token = process.env.QODER_PERSONAL_ACCESS_TOKEN;
+  const token =
+    provider === "qwen" || provider === "openai"
+      ? process.env.OPENAI_API_KEY ?? process.env.QWEN_API_KEY
+      : process.env.QODER_PERSONAL_ACCESS_TOKEN;
   if (token?.trim() && serializedEvents.includes(token)) {
-    throw new Error("The Qoder token appeared in live smoke events.");
+    throw new Error("The agent credential appeared in live smoke events.");
   }
   if (
     serializedEvents.includes(repositoryRoot) ||
@@ -276,14 +339,14 @@ Replace the exact text "before" in src/message.txt with "after".`,
   workspace = undefined;
   await rm(smokeRoot, { recursive: true, force: true });
   console.log(
-    `Qoder live smoke passed with SDK ${authentication.sdkVersion} using ${authentication.strategy} authentication.`,
+    `Agent live smoke passed with ${provider} SDK ${authentication.sdkVersion} using ${authentication.strategy} authentication (${fullSmoke ? "planning + diagnosis + repair" : "single repair turn"}).`,
   );
 }
 
 main().catch(async (error) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(
-    `Qoder live smoke failed: ${redactRunnerText(message, {
+    `Agent live smoke failed: ${redactRunnerText(message, {
       artifactRoot,
       environment: process.env,
       worktreePath: workspace?.worktreePath,

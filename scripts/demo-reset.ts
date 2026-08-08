@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  SOURCE_CACHE_OWNERSHIP_MARKER,
   cleanupWorkspace,
   type PreparedWorkspace,
 } from "@accesspath/git-workspace";
@@ -25,7 +26,14 @@ const markerPath = resolveSafeRelativePath(
   artifactRoot,
   ".accesspath-demo-owned.json",
 );
-const ownedDirectories = ["audits", "repairs", "worktrees"] as const;
+const ownedDirectories = [
+  "audits",
+  "missions",
+  "repairs",
+  "sandboxes",
+  "sources",
+  "worktrees",
+] as const;
 
 if (!(await fileExists(markerPath))) {
   const entries = await readdir(artifactRoot);
@@ -70,6 +78,28 @@ for (const directory of ownedDirectories) {
     recursive: true,
     force: true,
   });
+}
+const sourceCacheRoot = path.resolve(
+  path.dirname(artifactRoot),
+  `${path.basename(artifactRoot)}-sources`,
+);
+const sourceCacheMarker = path.join(
+  sourceCacheRoot,
+  SOURCE_CACHE_OWNERSHIP_MARKER,
+);
+if (await fileExists(sourceCacheMarker)) {
+  const sourceCacheOwnership = JSON.parse(
+    await readFile(sourceCacheMarker, "utf8"),
+  ) as { owner?: unknown; schemaVersion?: unknown };
+  if (
+    sourceCacheOwnership.owner !== "accesspath-source-cache" ||
+    sourceCacheOwnership.schemaVersion !== "1.0.0"
+  ) {
+    throw new Error(
+      "demo:reset refused a source cache with an invalid ownership marker.",
+    );
+  }
+  await rm(sourceCacheRoot, { recursive: true, force: true });
 }
 await writeFile(
   markerPath,

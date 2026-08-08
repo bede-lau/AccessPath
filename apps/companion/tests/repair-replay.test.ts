@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   compareReplayEvidence,
+  replayVerificationIsAcceptable,
   taskForPreview,
 } from "../src/repair-replay";
 
@@ -153,6 +154,9 @@ describe("repair replay evidence", () => {
         afterState: "remaining",
       }),
     ]);
+    expect(
+      replayVerificationIsAcceptable(before, after, ["AP-001"]),
+    ).toBe(true);
   });
 
   it("does not resolve a selected finding when its replay step is blocked", () => {
@@ -173,5 +177,54 @@ describe("repair replay evidence", () => {
         afterState: "unverified",
       }),
     ]);
+  });
+
+  it("does not resolve a selected finding from an observation after a blocker", () => {
+    const before = bundle({
+      id: "before-assisted",
+      findings: [finding("AP-002", "eligibility-choice")],
+    });
+    const after = bundle({
+      id: "after-assisted",
+      findings: [],
+      outcome: "blocked",
+      stepState: "observation",
+    });
+
+    expect(compareReplayEvidence(before, after, ["AP-002"])).toEqual([
+      expect.objectContaining({
+        findingId: "AP-002",
+        afterState: "unverified",
+        evidenceIds: ["artifact-after-assisted"],
+      }),
+    ]);
+    expect(
+      replayVerificationIsAcceptable(before, after, ["AP-002"]),
+    ).toBe(false);
+  });
+
+  it("rejects a repaired replay that introduces a new finding", () => {
+    const before = bundle({
+      id: "before-regression",
+      findings: [finding("AP-001", "eligibility-choice")],
+    });
+    const after = bundle({
+      id: "after-regression",
+      findings: [finding("AP-NEW", "eligibility-choice")],
+    });
+
+    expect(compareReplayEvidence(before, after, ["AP-001"])).toEqual([
+      expect.objectContaining({
+        findingId: "AP-001",
+        afterState: "unverified",
+      }),
+      expect.objectContaining({
+        findingId: "AP-NEW",
+        afterState: "regressed",
+      }),
+    ]);
+    expect(
+      replayVerificationIsAcceptable(before, after, ["AP-001"]),
+    ).toBe(false);
   });
 });

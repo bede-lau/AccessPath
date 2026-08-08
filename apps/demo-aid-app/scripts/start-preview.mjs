@@ -77,14 +77,14 @@ const server = http.createServer(async (request, response) => {
       if (
         typeof body !== "object" ||
         body === null ||
-        body.fictionalDataConfirmed !== true
+        body.applicationAccuracyConfirmed !== true
       ) {
-        throw new Error("Only fictional confirmed submissions are accepted.");
+        throw new Error("Application confirmation is required.");
       }
       submissionCount += 1;
       sendJson(response, 201, {
         status: "submitted",
-        reference: `TEST-${String(submissionCount).padStart(4, "0")}`,
+        reference: `APP-${String(submissionCount).padStart(4, "0")}`,
       });
     } catch (error) {
       sendJson(response, 400, {

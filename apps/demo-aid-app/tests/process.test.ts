@@ -136,7 +136,7 @@ describe("demo fixture process commands", () => {
         fullName: "Jordan Example",
         phone: "202-555-0148",
         assistanceTypes: ["housing"],
-        fictionalDataConfirmed: true,
+        applicationAccuracyConfirmed: true,
       }),
     });
 
@@ -148,7 +148,7 @@ describe("demo fixture process commands", () => {
     );
     expect(state).toMatchObject({
       submissions: [],
-      nextReference: "TEST-0001",
+      nextReference: "APP-0001",
     });
 
     fixtureProcess.kill("SIGTERM");

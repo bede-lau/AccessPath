@@ -1,0 +1,13 @@
+.git
+.github
+.omx
+.openai
+**/.accesspath
+**/artifacts
+**/coverage
+**/dist
+**/node_modules
+**/test-results
+*.log
+.env
+.env.*

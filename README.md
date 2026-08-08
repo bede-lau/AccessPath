@@ -1,7 +1,9 @@
 # AccessPath
 
-AccessPath is a task-path accessibility auditor with a local Qoder-powered
-source repair companion.
+AccessPath is an autonomous critical-journey QA workspace for web applications,
+with accessibility as its flagship specialist. A mission connects a staging
+URL, a source snapshot, and a plain-English objective into one continuous Proof
+Thread: observed behavior, scoped repair, and verified evidence.
 
 ## Prerequisites
 
@@ -9,21 +11,23 @@ source repair companion.
 - npm
 - Git
 - Playwright Chromium
+- Docker Desktop for repair and repaired-preview verification
 
 ## Quick Start
 
 ```powershell
 npm install
 npx playwright install chromium
-$env:ACCESSPATH_ARTIFACT_ROOT = "$HOME\.accesspath\demo"
-npm run demo:reset
+npm run sandbox:build
 npm run dev
 ```
 
 Open the console URL printed by `npm run dev`, normally
-`http://127.0.0.1:5173`. The emergency-aid fixture and local companion start
-with it. Occupied default backend ports are replaced with the next available
-loopback ports and printed in the terminal.
+`http://127.0.0.1:5173`. The local target application and companion start with
+it. When `accesspath-sandbox:local` is available, the development runner binds
+the companion to that image by its immutable content ID. Occupied default
+backend ports are replaced with the next available loopback ports and printed
+in the terminal.
 
 ## Verification
 
@@ -34,24 +38,28 @@ npm run test
 npm run test:security
 npm run test:a11y
 npm run test:e2e
-npm run demo:reset
+npm run workspace:reset
 npm run demo:verify
 ```
 
 ## Current Status
 
-**P07 MVP complete.** The local demo covers URL audit, Barrier Map, isolated
-repair, replay, evidence exports, and rewind preview.
+The Mission Workspace MVP supports a frozen plain-English browser plan, direct
+staging evidence, Qoder diagnosis and authorized source editing, Docker-isolated
+commands and Chromium replay, explicit patch acceptance, and durable reports.
 
-- The full automated demo uses the deterministic mock Qoder adapter and does
-  not consume live Qoder credits.
+- Qoder compiles the mission plan with no tools, diagnoses with read-only
+  tools, and repairs only approved exact paths with `Edit` or `Write`.
 - `npm run test:qoder:live` is the optional real-SDK smoke test. It requires
   `QODER_PERSONAL_ACCESS_TOKEN` or a local `qodercli` session and exits nonzero
   when neither is available.
-- Generated evidence and worktrees stay under the absolute
-  `ACCESSPATH_ARTIFACT_ROOT`, outside the editable repository.
+- The host owns browser actions, permissions, commands, evidence, and
+  verification. Missing replay evidence leaves a mission report-only.
+- `npm run workspace:reset` removes AccessPath-owned artifacts and temporary
+  repair branches. It does not reset the main checkout, normal branches, source
+  files, or their commits.
 
 ## Documentation
 
-See `docs/SETUP.md` for setup and `docs/DEMO.md` for the exact presentation
-flow.
+See `PRODUCT.md` and `DESIGN.md` for the Mission Workspace product and
+interaction contracts.

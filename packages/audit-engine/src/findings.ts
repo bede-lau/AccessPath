@@ -8,8 +8,8 @@ const fixtureDefinitions: Array<
 > = [
   {
     id: "AP-001",
-    title: "Eligibility choice cannot be selected with a keyboard",
-    affectedAction: "Choose an eligibility option with a keyboard",
+    title: "Keyboard users cannot choose an eligibility option",
+    affectedAction: "Choose an eligibility option",
     source: "task-runner",
     evidenceLabel: "observed",
     severity: "blocker",
@@ -19,22 +19,22 @@ const fixtureDefinitions: Array<
     selector: "[data-barrier-id='AP-001']",
     wcagRefs: ["2.1.1", "4.1.2"],
     observation:
-      "The reviewed radio action has no role/name target and the custom options expose no keyboard semantics.",
+      "The choices worked with a mouse, but the keyboard could not reach or select either option.",
     deterministicChecks: [
-      "No keyboard-operable radio role and accessible name were available.",
-      "The custom choice exposed no complete radio keyboard semantics.",
-      "A recorded pointer-only test assist was required to continue.",
+      "No keyboard-operable radio control with an accessible name was available.",
+      "The custom choices did not provide the standard keyboard behavior of radio buttons.",
+      "AccessPath used a recorded mouse assist to check later steps; the keyboard path remained blocked.",
     ],
     diagnosis:
-      "The custom options are non-interactive elements with pointer handlers only.",
+      "The choices are non-interactive elements with click handlers, so the browser does not treat them as radio buttons.",
     reproduction: [
-      "Load the eligibility step.",
-      "Attempt the reviewed radio action using keyboard-operable semantics.",
+      "Open the eligibility step.",
+      "Press Tab to move through the page, then try Space or Enter on either choice.",
     ],
     remediationGuidance:
-      "Use native radio inputs or implement complete radio semantics and keyboard behavior.",
+      "Replace the custom choices with native radio buttons. If custom controls are required, add the full radio-button name, role, focus, and keyboard behavior.",
     manualReview: [
-      "Confirm the repaired choice supports standard radio keyboard interaction.",
+      "Use only the keyboard to confirm that each option can receive focus and be selected with the standard radio-button keys.",
     ],
     matches: (item) =>
       item.stepId === "eligibility-choice" &&
@@ -44,8 +44,8 @@ const fixtureDefinitions: Array<
   },
   {
     id: "AP-002",
-    title: "Phone field omits telephone autocomplete metadata",
-    affectedAction: "Enter a phone number efficiently",
+    title: "The phone field cannot use saved phone details",
+    affectedAction: "Enter a phone number",
     source: "task-runner",
     evidenceLabel: "deterministic-check",
     severity: "moderate",
@@ -55,21 +55,22 @@ const fixtureDefinitions: Array<
     selector: "[data-barrier-id='AP-002']",
     wcagRefs: ["1.3.5"],
     observation:
-      "The telephone input has no autocomplete attribute in the observed browser DOM.",
+      "The phone field has a clear label, but it does not tell the browser that saved phone details can be used.",
     deterministicChecks: [
-      "The Phone number input returned no autocomplete attribute.",
+      "The Phone number field had no autocomplete value.",
     ],
-    diagnosis: "The telephone input omits autocomplete=\"tel\".",
-    reproduction: ["Inspect the Phone number input on the applicant profile step."],
-    remediationGuidance: "Add autocomplete=\"tel\" to the telephone input.",
+    diagnosis: "The input is missing autocomplete=\"tel\".",
+    reproduction: ["Open applicant details and inspect the Phone number field."],
+    remediationGuidance:
+      "Add autocomplete=\"tel\" to the Phone number field so browsers and assistive tools can identify its purpose.",
     manualReview: [],
     matches: (item) =>
       item.stepId === "profile-phone" && item.checks.ap002Autocomplete === null,
   },
   {
     id: "AP-003",
-    title: "Assistance choices lack a programmatic group label",
-    affectedAction: "Understand assistance type choices",
+    title: "Screen reader users may not hear what the assistance choices are for",
+    affectedAction: "Choose a type of assistance",
     source: "task-runner",
     evidenceLabel: "deterministic-check",
     severity: "serious",
@@ -79,26 +80,29 @@ const fixtureDefinitions: Array<
     selector: "[data-barrier-id='AP-003']",
     wcagRefs: ["1.3.1", "3.3.2"],
     observation:
-      "The related checkboxes are not contained in a fieldset or named group.",
+      "Each checkbox has a name, but the choices are not announced as one related group.",
     deterministicChecks: [
-      "No fieldset and legend contained the assistance choices.",
-      "No named role=group contained the assistance choices.",
+      "The assistance choices were not inside a fieldset with a legend.",
+      "No named group connected the choices.",
     ],
     diagnosis:
-      "The related checkboxes are presented in an unlabeled container.",
-    reproduction: ["Navigate between the assistance choices and inspect group context."],
+      "The checkboxes are inside a plain container with no group name.",
+    reproduction: [
+      "Open the assistance details with a screen reader.",
+      "Move into the checkboxes and listen for a name that explains the group.",
+    ],
     remediationGuidance:
-      "Wrap the related choices in a fieldset with a concise legend.",
+      "Put the related checkboxes in a fieldset and use a short legend that explains what the choices are for.",
     manualReview: [
-      "Confirm a screen reader announces the group name when entering the choices.",
+      "Confirm a screen reader announces the group name when focus enters the checkbox set.",
     ],
     matches: (item) =>
       item.stepId === "assistance-rent" && item.checks.ap003NamedGroup === false,
   },
   {
     id: "AP-004",
-    title: "Review error summary does not support efficient recovery",
-    affectedAction: "Recover from invalid review data",
+    title: "The error message does not help users reach the problem",
+    affectedAction: "Fix an incomplete application",
     source: "task-runner",
     evidenceLabel: "observed",
     severity: "serious",
@@ -108,21 +112,23 @@ const fixtureDefinitions: Array<
     selector: "[data-barrier-id='AP-004']",
     wcagRefs: ["2.4.3", "3.3.1", "3.3.3"],
     observation:
-      "The error summary became visible without focus moving to it and without a field link.",
+      "After submission failed, focus stayed on the Submit button and the error summary did not link to the unchecked confirmation.",
     deterministicChecks: [
       "The error summary became visible.",
       "The summary contained no link to the invalid field.",
       "Focus remained on the submit button.",
     ],
     diagnosis:
-      "The submit handler reveals static summary text without focus management or field links.",
+      "The submit handler reveals static summary text without moving focus or linking to the invalid field.",
     reproduction: [
-      "Leave the fictional-data confirmation unchecked.",
-      "Activate Submit test application.",
+      "Leave the application confirmation unchecked.",
+      "Activate Submit application.",
     ],
     remediationGuidance:
-      "Focus the summary and link its error item to the invalid confirmation control.",
-    manualReview: ["Confirm focus order remains logical after error recovery."],
+      "Move focus to the error summary and link its message to the confirmation that needs attention.",
+    manualReview: [
+      "Submit the incomplete form with a keyboard and confirm the error summary is announced and leads to the unchecked confirmation.",
+    ],
     matches: (item) =>
       item.stepId === "review-invalid" &&
       item.checks.ap004SummaryVisible === true &&
@@ -131,8 +137,8 @@ const fixtureDefinitions: Array<
   },
   {
     id: "AP-005",
-    title: "Submission confirmation is not announced as a status",
-    affectedAction: "Know the test application was submitted",
+    title: "Screen reader users may miss the submission confirmation",
+    affectedAction: "Confirm the application was submitted",
     source: "task-runner",
     evidenceLabel: "manual-review-required",
     severity: "serious",
@@ -142,19 +148,19 @@ const fixtureDefinitions: Array<
     selector: "[data-barrier-id='AP-005']",
     wcagRefs: ["4.1.3"],
     observation:
-      "The visible submission confirmation has neither status semantics nor a live region.",
+      "The confirmation appeared on screen, but a screen reader was not automatically told that it appeared.",
     deterministicChecks: [
       "The submission confirmation was visible.",
       "The confirmation had neither role=status nor aria-live.",
     ],
     diagnosis:
-      "The newly revealed confirmation has no status or live-region semantics.",
+      "The newly revealed confirmation has no status role or live-region setting.",
     reproduction: [
-      "Submit the fictional application.",
+      "Submit the application.",
       "Wait for the confirmation without moving focus.",
     ],
     remediationGuidance:
-      "Expose the confirmation through an appropriate status or live region.",
+      "Mark the confirmation as an appropriate status or live region so assistive technology announces it.",
     manualReview: [
       "Confirm the completed submission is announced without moving focus.",
     ],

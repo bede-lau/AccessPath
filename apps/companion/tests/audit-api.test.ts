@@ -118,6 +118,27 @@ describe("companion audit API lifecycle", () => {
       targetPolicies: ["public", "local-explicit"],
     });
 
+    const mapped = await server.inject({
+      method: "POST",
+      url: "/api/audits/map-target",
+      headers: headers(),
+      payload: {
+        startUrl: "https://example.test/application",
+        targetPolicy: "public",
+      },
+    });
+    expect(mapped.statusCode).toBe(200);
+    expect(mapped.json().task).toMatchObject({
+      startUrl: "https://example.test/application",
+      targetPolicy: "public",
+      expectedSteps: [
+        {
+          id: "url-baseline",
+          intent: "Confirm the target page loaded",
+        },
+      ],
+    });
+
     const created = await server.inject({
       method: "POST",
       url: "/api/audits",

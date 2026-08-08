@@ -48,10 +48,10 @@ describe("P03 emergency-aid fixture integration", () => {
       ),
     ).toMatchObject({
       state: "blocked",
-      observedOutcome: expect.stringContaining("test assist"),
+      observedOutcome: expect.stringContaining("recorded mouse action"),
     });
     expect(result.bundle.limitations).toContain(
-      "AP-001 required a recorded pointer-only test assist. The unassisted task path remained blocked and was not classified as successful.",
+      "AP-001 could not be completed with a keyboard. AccessPath used a recorded mouse action only to check later steps; AP-001 still counted as blocked.",
     );
     expect(result.bundle.artifacts.some((item) => item.kind === "screenshot")).toBe(
       true,

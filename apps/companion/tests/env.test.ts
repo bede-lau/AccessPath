@@ -32,6 +32,26 @@ describe("loadEnv", () => {
     expect(loadEnv({}).port).toBe(0);
   });
 
+  it("defaults the console origin port to 5173", () => {
+    expect(loadEnv({}).consolePort).toBe(5173);
+  });
+
+  it("uses live-agent timeouts that leave room for real tool activity", () => {
+    expect(loadEnv({})).toMatchObject({
+      demoAgentInactivityTimeoutMs: 20_000,
+      demoAgentHardTimeoutMs: 90_000,
+    });
+    expect(
+      loadEnv({
+        ACCESSPATH_DEMO_AGENT_INACTIVITY_TIMEOUT_MS: "30000",
+        ACCESSPATH_DEMO_AGENT_HARD_TIMEOUT_MS: "120000",
+      }),
+    ).toMatchObject({
+      demoAgentInactivityTimeoutMs: 30_000,
+      demoAgentHardTimeoutMs: 120_000,
+    });
+  });
+
   it("rejects every non-loopback host", () => {
     expect(() => loadEnv({ ACCESSPATH_HOST: "0.0.0.0" })).toThrow(
       /127\.0\.0\.1/,
@@ -64,6 +84,18 @@ describe("loadEnv", () => {
     expect(() => loadEnv({ ACCESSPATH_PORT: "12.5" })).toThrow(
       /ACCESSPATH_PORT/,
     );
+    expect(() => loadEnv({ ACCESSPATH_DEV_CONSOLE_PORT: "0" })).toThrow(
+      /ACCESSPATH_DEV_CONSOLE_PORT/,
+    );
+    expect(() =>
+      loadEnv({ ACCESSPATH_DEMO_AGENT_INACTIVITY_TIMEOUT_MS: "-1" }),
+    ).toThrow(/ACCESSPATH_DEMO_AGENT_INACTIVITY_TIMEOUT_MS/);
+    expect(() =>
+      loadEnv({
+        ACCESSPATH_DEMO_AGENT_INACTIVITY_TIMEOUT_MS: "30000",
+        ACCESSPATH_DEMO_AGENT_HARD_TIMEOUT_MS: "20000",
+      }),
+    ).toThrow(/ACCESSPATH_DEMO_AGENT_HARD_TIMEOUT_MS/);
   });
 
   it("applies remaining defaults without mutating the input", () => {

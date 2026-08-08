@@ -6,8 +6,11 @@ import { fileURLToPath } from "node:url";
 export interface CompanionConfig {
   host: string;
   port: number;
+  consolePort: number;
   artifactRoot: string;
   demoAidAppPort: number;
+  demoAgentInactivityTimeoutMs: number;
+  demoAgentHardTimeoutMs: number;
   nodeEnv: string;
   launchToken?: string;
 }
@@ -64,6 +67,21 @@ function parsePort(
   return port;
 }
 
+function parseNonNegativeInteger(
+  raw: string | undefined,
+  name: string,
+  fallback: number,
+): number {
+  if (raw === undefined || raw === "") {
+    return fallback;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative integer, got "${raw}".`);
+  }
+  return value;
+}
+
 /**
  * Loads and validates companion configuration from environment variables.
  *
@@ -83,11 +101,34 @@ export function loadEnv(
   }
 
   const port = parsePort(env.ACCESSPATH_PORT, "ACCESSPATH_PORT", 0);
+  const consolePort = parsePort(
+    env.ACCESSPATH_DEV_CONSOLE_PORT,
+    "ACCESSPATH_DEV_CONSOLE_PORT",
+    5173,
+  );
+  if (consolePort === 0) {
+    throw new Error("ACCESSPATH_DEV_CONSOLE_PORT must not be 0.");
+  }
   const demoAidAppPort = parsePort(
     env.DEMO_AID_APP_PORT,
     "DEMO_AID_APP_PORT",
     4173,
   );
+  const demoAgentInactivityTimeoutMs = parseNonNegativeInteger(
+    env.ACCESSPATH_DEMO_AGENT_INACTIVITY_TIMEOUT_MS,
+    "ACCESSPATH_DEMO_AGENT_INACTIVITY_TIMEOUT_MS",
+    20_000,
+  );
+  const demoAgentHardTimeoutMs = parseNonNegativeInteger(
+    env.ACCESSPATH_DEMO_AGENT_HARD_TIMEOUT_MS,
+    "ACCESSPATH_DEMO_AGENT_HARD_TIMEOUT_MS",
+    90_000,
+  );
+  if (demoAgentHardTimeoutMs < demoAgentInactivityTimeoutMs) {
+    throw new Error(
+      "ACCESSPATH_DEMO_AGENT_HARD_TIMEOUT_MS must be greater than or equal to ACCESSPATH_DEMO_AGENT_INACTIVITY_TIMEOUT_MS.",
+    );
+  }
 
   let artifactRoot: string;
   if (env.ACCESSPATH_ARTIFACT_ROOT !== undefined) {
@@ -110,8 +151,11 @@ export function loadEnv(
   return {
     host,
     port,
+    consolePort,
     artifactRoot,
     demoAidAppPort,
+    demoAgentInactivityTimeoutMs,
+    demoAgentHardTimeoutMs,
     nodeEnv: env.NODE_ENV ?? "development",
     launchToken: env.ACCESSPATH_LAUNCH_TOKEN,
   };

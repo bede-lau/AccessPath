@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createToolPolicy,
   matchesAllowedPath,
+  matchesAllowedSearchRoot,
   resolveWorktreePath,
 } from "../src/index";
 import { repairManifest, temporaryWorkspace } from "./helpers";
@@ -14,6 +15,12 @@ describe("Qoder tool policy", () => {
     expect(matchesAllowedPath("src/feature.ts", ["src/**"])).toBe(true);
     expect(matchesAllowedPath("src/nested/feature.ts", ["src/**"])).toBe(true);
     expect(matchesAllowedPath("package.json", ["src/**"])).toBe(false);
+  });
+
+  it("allows searches only for explicitly recursive directory scopes", () => {
+    expect(matchesAllowedSearchRoot("src", ["src/**"])).toBe(true);
+    expect(matchesAllowedSearchRoot("src", ["src/**/allowed.ts"])).toBe(false);
+    expect(matchesAllowedSearchRoot("", ["*.ts"])).toBe(false);
   });
 
   it("rejects traversal and absolute paths outside the worktree", async () => {
@@ -56,6 +63,62 @@ describe("Qoder tool policy", () => {
           },
         ),
       ).resolves.toEqual({ behavior: "allow" });
+      expect(emit).toHaveBeenNthCalledWith(1, {
+        type: "tool.approved",
+        payload: {
+          toolName: "Read",
+          risk: "read",
+          targetPaths: ["src/feature.ts"],
+          toolUseId: "read-001",
+        },
+      });
+      expect(emit).toHaveBeenNthCalledWith(2, {
+        type: "tool.started",
+        payload: {
+          toolName: "Read",
+          risk: "read",
+          targetPaths: ["src/feature.ts"],
+          toolUseId: "read-001",
+        },
+      });
+      await expect(
+        policy(
+          "Read",
+          { file_path: "package.json" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "read-002",
+          },
+        ),
+      ).resolves.toMatchObject({ behavior: "deny" });
+      const fileScopedPolicy = createToolPolicy({
+        emit,
+        manifest: repairManifest(["src/feature.ts"]),
+        mode: "diagnosis",
+        repairSessionId: "repair-001",
+        requestApproval,
+        worktreePath: workspace.worktreePath,
+      });
+      await expect(
+        fileScopedPolicy(
+          "Glob",
+          { path: "src", pattern: "**/*.ts" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "glob-file-scope",
+          },
+        ),
+      ).resolves.toMatchObject({ behavior: "deny" });
+      await expect(
+        policy(
+          "Grep",
+          { path: "." },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "grep-001",
+          },
+        ),
+      ).resolves.toMatchObject({ behavior: "deny" });
       await expect(
         policy(
           "Edit",
@@ -138,6 +201,38 @@ describe("Qoder tool policy", () => {
           ),
         ).resolves.toMatchObject({ behavior: "deny" });
       }
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("reuses approve-session for repeated writes to the same file", async () => {
+    const workspace = await temporaryWorkspace();
+    try {
+      const requestApproval = vi.fn(async () => ({
+        decision: "approve-session" as const,
+      }));
+      const policy = createToolPolicy({
+        emit: async () => undefined,
+        manifest: repairManifest(),
+        mode: "repair",
+        repairSessionId: "repair-001",
+        requestApproval,
+        worktreePath: workspace.worktreePath,
+      });
+      for (const toolUseID of ["edit-001", "edit-002"]) {
+        await expect(
+          policy(
+            "Edit",
+            { file_path: "src/feature.ts" },
+            {
+              signal: new AbortController().signal,
+              toolUseID,
+            },
+          ),
+        ).resolves.toMatchObject({ behavior: "allow", toolUseID });
+      }
+      expect(requestApproval).toHaveBeenCalledTimes(1);
     } finally {
       await workspace.cleanup();
     }

@@ -6,12 +6,16 @@ import type {
   SDKMessage,
   SDKUserMessage,
 } from "@qoder-ai/qoder-agent-sdk";
+import type { TaskContract } from "@accesspath/contracts";
 
 import { resolveWorktreePath } from "./policy";
 import type {
   QoderAdapter,
+  QoderAdapterRecoveryOptions,
   QoderAdapterSession,
   QoderAdapterStartOptions,
+  QoderTurnRecovery,
+  RecoveredRepairTurn,
 } from "./types";
 
 export interface DeterministicMockEdit {
@@ -29,6 +33,8 @@ export interface DeterministicMockQoderOptions {
   completionDelayMs?: number;
   diagnosis?: string;
   edits?: DeterministicMockEdit[];
+  planningOutput?: string;
+  planningTask?: TaskContract;
   repairSummary?: string;
   streamDelayMs?: number;
   writes?: DeterministicMockWrite[];
@@ -106,8 +112,36 @@ function resultMessage(
     result,
     stop_reason: "end_turn",
     total_cost_usd: 0,
-    usage: {},
-    modelUsage: {},
+    usage: {
+      cache_creation: {
+        ephemeral_1h_input_tokens: 0,
+        ephemeral_5m_input_tokens: 0,
+      },
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      inference_geo: "mock",
+      input_tokens: 12,
+      iterations: [],
+      output_tokens: 8,
+      server_tool_use: {
+        web_fetch_requests: 0,
+        web_search_requests: 0,
+      },
+      service_tier: "mock",
+      speed: "mock",
+    },
+    modelUsage: {
+      "accesspath-deterministic-mock": {
+        inputTokens: 12,
+        outputTokens: 8,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        webSearchRequests: 0,
+        costUSD: 0,
+        contextWindow: 32_000,
+        maxOutputTokens: 4_096,
+      },
+    },
     permission_denials: permissionDenials,
     uuid: randomUUID(),
     session_id: sessionId,
@@ -156,12 +190,33 @@ async function delay(milliseconds: number): Promise<void> {
 class MockSession implements QoderAdapterSession {
   private closed = false;
   private interrupted = false;
-  private rewindEntries: RewindEntry[] = [];
+  private userMessageId?: string;
 
   public constructor(
     private readonly startOptions: QoderAdapterStartOptions,
     private readonly mockOptions: DeterministicMockQoderOptions,
+    private readonly rewindEntriesByMessageId: Map<string, RewindEntry[]>,
+    private readonly recordCompletedTurn: (
+      turn: RecoveredRepairTurn,
+    ) => void,
+    private readonly recordStartedTurn: (
+      sessionId: string,
+      userMessageId: string,
+    ) => void,
   ) {}
+
+  private rewindEntries(): RewindEntry[] {
+    if (this.userMessageId === undefined) {
+      return [];
+    }
+    const existing = this.rewindEntriesByMessageId.get(this.userMessageId);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created: RewindEntry[] = [];
+    this.rewindEntriesByMessageId.set(this.userMessageId, created);
+    return created;
+  }
 
   public async *[Symbol.asyncIterator](): AsyncIterator<SDKMessage> {
     const iterator = this.startOptions.prompt[Symbol.asyncIterator]();
@@ -169,7 +224,15 @@ class MockSession implements QoderAdapterSession {
     if (next.done) {
       return;
     }
+    if (next.value.uuid === undefined) {
+      throw new Error("Mock Qoder prompts require a user message UUID.");
+    }
+    const userMessageId = next.value.uuid;
+    this.userMessageId = userMessageId;
     const sessionId = this.startOptions.sessionId;
+    if (this.startOptions.mode !== "planning") {
+      this.recordStartedTurn(sessionId, userMessageId);
+    }
     yield {
       type: "system",
       subtype: "init",
@@ -177,7 +240,9 @@ class MockSession implements QoderAdapterSession {
       qodercli_version: "mock",
       cwd: this.startOptions.cwd,
       tools:
-        this.startOptions.mode === "diagnosis"
+        this.startOptions.mode === "planning"
+          ? []
+          : this.startOptions.mode === "diagnosis"
           ? ["Read", "Glob", "Grep"]
           : ["Read", "Glob", "Grep", "Edit", "Write"],
       mcp_servers: [],
@@ -196,6 +261,44 @@ class MockSession implements QoderAdapterSession {
       return;
     }
 
+    if (this.startOptions.mode === "planning") {
+      const planningOutput =
+        this.mockOptions.planningOutput ??
+        JSON.stringify(
+          this.mockOptions.planningTask ?? {
+            schemaVersion: "1.0.0",
+            id: "task-mock-mission",
+            title: "Mock mission",
+            goal: "Complete the host-provided objective.",
+            startUrl: "https://example.test/",
+            targetPolicy: "public",
+            success: { visibleText: "Complete" },
+            forbiddenActions: ["Do not leave the described flow."],
+            expectedSteps: [
+              {
+                id: "confirm-complete",
+                intent: "Confirm the mission completed",
+                action: { kind: "assert", text: "Complete" },
+                checkpoint: true,
+              },
+            ],
+            fixtureValues: {},
+            viewport: { width: 1280, height: 800 },
+            timeoutMs: 60_000,
+          },
+        );
+      yield assistantMessage(sessionId, [
+        { type: "text", text: planningOutput },
+      ]);
+      yield resultMessage(sessionId, planningOutput);
+      return;
+    }
+
+    const cwd = this.startOptions.cwd;
+    if (cwd === undefined) {
+      throw new Error("Mock diagnosis and repair sessions require a cwd.");
+    }
+
     if (this.startOptions.mode === "diagnosis") {
       const diagnosis =
         this.mockOptions.diagnosis ??
@@ -207,6 +310,14 @@ class MockSession implements QoderAdapterSession {
           thinking: `Hidden reasoning for ${userText(next.value)}`,
         },
       ]);
+      this.recordCompletedTurn({
+        completedMessages: [diagnosis],
+        qoderSessionId: sessionId,
+        result: diagnosis,
+        resultSubtype: "success",
+        stopReason: "end_turn",
+        userMessageId,
+      });
       yield resultMessage(sessionId, diagnosis);
       return;
     }
@@ -217,7 +328,7 @@ class MockSession implements QoderAdapterSession {
         return;
       }
       const target = await resolveWorktreePath(
-        this.startOptions.cwd,
+        cwd,
         edit.filePath,
       );
       const original = await readFile(target.absolutePath, "utf8");
@@ -227,6 +338,12 @@ class MockSession implements QoderAdapterSession {
           ? edit.oldText.replaceAll("\n", "\r\n")
           : undefined;
       if (anchor === undefined) {
+        if (
+          original.includes(edit.newText) ||
+          original.includes(edit.newText.replaceAll("\n", "\r\n"))
+        ) {
+          continue;
+        }
         throw new Error(
           `Mock edit anchor was not found in ${target.relativePath}.`,
         );
@@ -260,7 +377,7 @@ class MockSession implements QoderAdapterSession {
         },
       );
       if (permission.behavior === "allow") {
-        this.rewindEntries.push({
+        this.rewindEntries().push({
           action: "restore",
           ...target,
           content: original,
@@ -286,7 +403,7 @@ class MockSession implements QoderAdapterSession {
         return;
       }
       const target: ResolvedFile = await resolveWorktreePath(
-        this.startOptions.cwd,
+        cwd,
         write.filePath,
       );
       const toolUseId = `tool-${randomUUID()}`;
@@ -307,14 +424,24 @@ class MockSession implements QoderAdapterSession {
         toolUseID: toolUseId,
       });
       if (permission.behavior === "allow") {
-        await writeFile(target.absolutePath, write.content, {
-          encoding: "utf8",
-          flag: "wx",
-        });
-        this.rewindEntries.push({
-          action: "delete",
-          ...target,
-        });
+        try {
+          await writeFile(target.absolutePath, write.content, {
+            encoding: "utf8",
+            flag: "wx",
+          });
+          this.rewindEntries().push({
+            action: "delete",
+            ...target,
+          });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+            throw error;
+          }
+          const current = await readFile(target.absolutePath, "utf8");
+          if (current !== write.content) {
+            throw error;
+          }
+        }
       } else {
         permissionDenials.push({
           tool_name: "Write",
@@ -334,6 +461,14 @@ class MockSession implements QoderAdapterSession {
       return;
     }
     yield assistantMessage(sessionId, [{ type: "text", text: summary }]);
+    this.recordCompletedTurn({
+      completedMessages: [summary],
+      qoderSessionId: sessionId,
+      result: summary,
+      resultSubtype: "success",
+      stopReason: "end_turn",
+      userMessageId,
+    });
     yield resultMessage(sessionId, summary, permissionDenials);
   }
 
@@ -346,19 +481,21 @@ class MockSession implements QoderAdapterSession {
   }
 
   public async rewindFiles(
-    _userMessageId: string,
+    userMessageId: string,
     options: { dryRun?: boolean } = {},
   ) {
-    const filesChanged = this.rewindEntries.map((file) => file.relativePath);
+    const rewindEntries =
+      this.rewindEntriesByMessageId.get(userMessageId) ?? [];
+    const filesChanged = rewindEntries.map((file) => file.relativePath);
     if (options.dryRun !== true) {
-      for (const file of this.rewindEntries.slice().reverse()) {
+      for (const file of rewindEntries.slice().reverse()) {
         if (file.action === "restore") {
           await writeFile(file.absolutePath, file.content, "utf8");
         } else {
           await rm(file.absolutePath, { force: true });
         }
       }
-      this.rewindEntries = [];
+      this.rewindEntriesByMessageId.delete(userMessageId);
     }
     return {
       canRewind: filesChanged.length > 0,
@@ -370,11 +507,82 @@ class MockSession implements QoderAdapterSession {
 }
 
 export class DeterministicMockQoderAdapter implements QoderAdapter {
+  public readonly starts: QoderAdapterStartOptions[] = [];
+  private readonly completedTurns = new Map<string, RecoveredRepairTurn>();
+  private readonly startedTurns = new Set<string>();
+  private readonly rewindEntriesBySession = new Map<
+    string,
+    Map<string, RewindEntry[]>
+  >();
+
   public constructor(
     private readonly options: DeterministicMockQoderOptions = {},
   ) {}
 
+  private completedTurnKey(
+    sessionId: string,
+    userMessageId: string,
+  ): string {
+    return `${sessionId}:${userMessageId}`;
+  }
+
+  public recordCompletedTurn(turn: RecoveredRepairTurn): void {
+    this.startedTurns.add(
+      this.completedTurnKey(
+        turn.qoderSessionId,
+        turn.userMessageId,
+      ),
+    );
+    this.completedTurns.set(
+      this.completedTurnKey(
+        turn.qoderSessionId,
+        turn.userMessageId,
+      ),
+      turn,
+    );
+  }
+
+  public forgetPersistedTurn(
+    sessionId: string,
+    userMessageId: string,
+  ): void {
+    const key = this.completedTurnKey(sessionId, userMessageId);
+    this.startedTurns.delete(key);
+    this.completedTurns.delete(key);
+  }
+
+  public async inspectPersistedTurn(
+    options: QoderAdapterRecoveryOptions,
+  ): Promise<QoderTurnRecovery> {
+    const key = this.completedTurnKey(
+      options.sessionId,
+      options.userMessageId,
+    );
+    const turn = this.completedTurns.get(key);
+    if (turn !== undefined) {
+      return { status: "completed", turn };
+    }
+    return {
+      status: this.startedTurns.has(key) ? "incomplete" : "missing",
+    };
+  }
+
   public start(options: QoderAdapterStartOptions): QoderAdapterSession {
-    return new MockSession(options, this.options);
+    this.starts.push(options);
+    const rewindEntries =
+      this.rewindEntriesBySession.get(options.sessionId) ??
+      new Map<string, RewindEntry[]>();
+    this.rewindEntriesBySession.set(options.sessionId, rewindEntries);
+    return new MockSession(
+      options,
+      this.options,
+      rewindEntries,
+      (turn) => this.recordCompletedTurn(turn),
+      (sessionId, userMessageId) => {
+        this.startedTurns.add(
+          this.completedTurnKey(sessionId, userMessageId),
+        );
+      },
+    );
   }
 }

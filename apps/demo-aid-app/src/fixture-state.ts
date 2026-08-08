@@ -3,7 +3,7 @@ export interface TestSubmissionInput {
   fullName: string;
   phone: string;
   assistanceTypes: string[];
-  fictionalDataConfirmed: true;
+  applicationAccuracyConfirmed: true;
 }
 
 export interface StoredTestSubmission extends TestSubmissionInput {
@@ -30,7 +30,7 @@ export class InMemoryFixtureStore {
   }
 
   submit(input: TestSubmissionInput): StoredTestSubmission {
-    const reference = `TEST-${String(this.#submissions.length + 1).padStart(4, "0")}`;
+    const reference = `APP-${String(this.#submissions.length + 1).padStart(4, "0")}`;
     const submission = {
       ...input,
       assistanceTypes: [...input.assistanceTypes],
@@ -50,7 +50,7 @@ export class InMemoryFixtureStore {
         ...submission,
         assistanceTypes: [...submission.assistanceTypes],
       })),
-      nextReference: `TEST-${String(this.#submissions.length + 1).padStart(4, "0")}`,
+      nextReference: `APP-${String(this.#submissions.length + 1).padStart(4, "0")}`,
     };
   }
 }
@@ -62,7 +62,7 @@ export function parseTestSubmission(value: unknown): TestSubmissionInput {
 
   const input = value as Record<string, unknown>;
   if (input.eligibility !== "yes" && input.eligibility !== "not-sure") {
-    throw new Error("Eligibility must use a supported fictional fixture value.");
+    throw new Error("Choose a supported eligibility option.");
   }
   if (typeof input.fullName !== "string" || input.fullName.trim() === "") {
     throw new Error("Full name is required.");
@@ -77,8 +77,8 @@ export function parseTestSubmission(value: unknown): TestSubmissionInput {
   ) {
     throw new Error("At least one assistance type is required.");
   }
-  if (input.fictionalDataConfirmed !== true) {
-    throw new Error("Fictional test-data confirmation is required.");
+  if (input.applicationAccuracyConfirmed !== true) {
+    throw new Error("Application confirmation is required.");
   }
 
   return {
@@ -86,6 +86,6 @@ export function parseTestSubmission(value: unknown): TestSubmissionInput {
     fullName: input.fullName.trim(),
     phone: input.phone.trim(),
     assistanceTypes: [...input.assistanceTypes],
-    fictionalDataConfirmed: true,
+    applicationAccuracyConfirmed: true,
   };
 }

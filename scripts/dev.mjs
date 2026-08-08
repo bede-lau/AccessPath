@@ -14,7 +14,8 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 // DEV-ONLY PORT WIRING:
-// - The companion prefers 4801 and the fixture prefers 4173.
+// - The companion prefers 4801, the fixture prefers 4173, and the console
+//   prefers 5173.
 // - When a preferred default is occupied, the next free loopback port is used.
 // - Explicit ACCESSPATH_DEV_* overrides fail closed when unavailable.
 // - The selected companion port is injected into the Vite /api proxy.
@@ -76,15 +77,22 @@ async function resolveDevelopmentPort(environmentKey, defaultPort) {
 
 let DEV_COMPANION_PORT;
 let DEV_DEMO_AID_APP_PORT;
+let DEV_CONSOLE_PORT;
 try {
-  [DEV_COMPANION_PORT, DEV_DEMO_AID_APP_PORT] = await Promise.all([
-    resolveDevelopmentPort("ACCESSPATH_DEV_COMPANION_PORT", 4801),
-    resolveDevelopmentPort("ACCESSPATH_DEV_DEMO_AID_APP_PORT", 4173),
-  ]);
-  if (DEV_COMPANION_PORT === DEV_DEMO_AID_APP_PORT) {
-    throw new Error(
-      "The development companion and fixture must use different ports.",
-    );
+  [DEV_COMPANION_PORT, DEV_DEMO_AID_APP_PORT, DEV_CONSOLE_PORT] =
+    await Promise.all([
+      resolveDevelopmentPort("ACCESSPATH_DEV_COMPANION_PORT", 4801),
+      resolveDevelopmentPort("ACCESSPATH_DEV_DEMO_AID_APP_PORT", 4173),
+      resolveDevelopmentPort("ACCESSPATH_DEV_CONSOLE_PORT", 5173),
+    ]);
+  if (
+    new Set([
+      DEV_COMPANION_PORT,
+      DEV_DEMO_AID_APP_PORT,
+      DEV_CONSOLE_PORT,
+    ]).size !== 3
+  ) {
+    throw new Error("The development services must use different ports.");
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -93,6 +101,29 @@ try {
 }
 
 const DEV_LAUNCH_TOKEN = randomBytes(32).toString("base64url");
+const DEV_SANDBOX_IMAGE =
+  process.env.ACCESSPATH_SANDBOX_IMAGE ??
+  (() => {
+    const inspected = spawnSync(
+      "docker",
+      [
+        "image",
+        "inspect",
+        "accesspath-sandbox:local",
+        "--format",
+        "{{.Id}}",
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        windowsHide: true,
+      },
+    );
+    const imageId = inspected.stdout?.trim();
+    return inspected.status === 0 && /^sha256:[a-f0-9]{64}$/i.test(imageId)
+      ? imageId
+      : undefined;
+  })();
 
 // Fixed constant commands only — one consistent npm-based approach for all
 // three children. Each child runs its own workspace "dev" script from the
@@ -116,7 +147,7 @@ function resolveNpmCli() {
 }
 
 const NPM_CLI = resolveNpmCli();
-const NPM_DEV_ARGS = ["run", "dev"];
+const NPM_DEV_ARGS = ["run", "dev:worker"];
 const BASE_ENV_KEYS = [
   "APPDATA",
   "ComSpec",
@@ -150,13 +181,25 @@ const CHILDREN_SPECS = [
     cwd: path.join(repoRoot, "apps", "companion"),
     env: {
       ACCESSPATH_PORT: DEV_COMPANION_PORT,
+      ACCESSPATH_DEV_CONSOLE_PORT: DEV_CONSOLE_PORT,
       ACCESSPATH_LAUNCH_TOKEN: DEV_LAUNCH_TOKEN,
       DEMO_AID_APP_PORT: DEV_DEMO_AID_APP_PORT,
+      ...(DEV_SANDBOX_IMAGE === undefined
+        ? {}
+        : { ACCESSPATH_SANDBOX_IMAGE: DEV_SANDBOX_IMAGE }),
     },
     forwardEnv: [
       "ACCESSPATH_ARTIFACT_ROOT",
       "ACCESSPATH_HOST",
+      "ACCESSPATH_SANDBOX_IMAGE",
+      "AGENT_PROVIDER",
       "QODER_PERSONAL_ACCESS_TOKEN",
+      "OPENAI_API_KEY",
+      "OPENAI_BASE_URL",
+      "OPENAI_MODEL",
+      "QWEN_API_KEY",
+      "QWEN_BASE_URL",
+      "QWEN_MODEL",
     ],
   },
   {
@@ -169,6 +212,7 @@ const CHILDREN_SPECS = [
     name: "console",
     cwd: path.join(repoRoot, "apps", "console"),
     env: {
+      ACCESSPATH_DEV_CONSOLE_PORT: DEV_CONSOLE_PORT,
       ACCESSPATH_DEV_PROXY_PORT: DEV_COMPANION_PORT,
       VITE_ACCESSPATH_LAUNCH_TOKEN: DEV_LAUNCH_TOKEN,
     },
@@ -273,5 +317,8 @@ process.on("SIGTERM", () => shutdown(0));
 
 process.stdout.write(
   `[dev] starting companion (port ${DEV_COMPANION_PORT}), demo-aid-app ` +
-    `(port ${DEV_DEMO_AID_APP_PORT}), console (Vite dev server)\n`,
+    `(port ${DEV_DEMO_AID_APP_PORT}), console (port ${DEV_CONSOLE_PORT})` +
+    (DEV_SANDBOX_IMAGE === undefined
+      ? "\n"
+      : `, sandbox ${DEV_SANDBOX_IMAGE.slice(0, 19)}...\n`),
 );

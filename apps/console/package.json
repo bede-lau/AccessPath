@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node ../../scripts/dev.mjs",
+    "dev:worker": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "test": "cd ../.. && vitest run --project console",

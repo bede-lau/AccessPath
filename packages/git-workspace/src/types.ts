@@ -1,4 +1,8 @@
-import type { RepositoryConfig } from "@accesspath/contracts";
+import type {
+  RepositoryConfig,
+  SourceSnapshot,
+  SourceSpec,
+} from "@accesspath/contracts";
 
 export type GitWorkspaceErrorCode =
   | "REPOSITORY_INVALID"
@@ -95,4 +99,39 @@ export type PrepareWorkspaceOptions = {
 
 export type CleanupWorkspaceOptions = {
   force?: boolean;
+};
+
+export type SourceAcquisitionErrorCode =
+  | "SOURCE_INVALID"
+  | "SOURCE_CHANGED"
+  | "SOURCE_TOO_LARGE"
+  | "SOURCE_SYMLINK_ESCAPE"
+  | "SOURCE_UNSUPPORTED"
+  | "SOURCE_TIMEOUT"
+  | "SOURCE_FETCH_FAILED";
+
+export class SourceAcquisitionError extends Error {
+  public constructor(
+    public readonly code: SourceAcquisitionErrorCode,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
+}
+
+export type SourceAcquirerOptions = {
+  cacheRoot: string;
+  timeoutMs?: number;
+  maxAddedFileBytes?: number;
+  maxPayloadBytes?: number;
+  maxPublicRepositoryBytes?: number;
+  now?: () => Date;
+  beforeConsistencyCheck?: () => void | Promise<void>;
+};
+
+export type AcquiredSource = {
+  source: SourceSpec;
+  repositoryPath: string;
+  snapshot: SourceSnapshot;
 };

@@ -11,7 +11,7 @@ const inaccessibleEligibilityOptions = `              <div
                 <span class="eligibility-option__marker" aria-hidden="true"></span>
                 <span>
                   <strong>Yes, my household needs help</strong>
-                  <small>Continue to the fictional application.</small>
+                  <small>Continue to the application.</small>
                 </span>
               </div>
               <div
@@ -22,7 +22,7 @@ const inaccessibleEligibilityOptions = `              <div
                 <span class="eligibility-option__marker" aria-hidden="true"></span>
                 <span>
                   <strong>I am not sure</strong>
-                  <small>You can still continue for this demonstration.</small>
+                  <small>You can still continue and review available support.</small>
                 </span>
               </div>`;
 
@@ -34,7 +34,7 @@ const accessibleEligibilityOptions = `              <label
                 <input type="radio" name="eligibility" value="yes" />
                 <span>
                   <strong>Yes, my household needs help</strong>
-                  <small>Continue to the fictional application.</small>
+                  <small>Continue to the application.</small>
                 </span>
               </label>
               <label
@@ -45,7 +45,7 @@ const accessibleEligibilityOptions = `              <label
                 <input type="radio" name="eligibility" value="not-sure" />
                 <span>
                   <strong>I am not sure</strong>
-                  <small>You can still continue for this demonstration.</small>
+                  <small>You can still continue and review available support.</small>
                 </span>
               </label>`;
 

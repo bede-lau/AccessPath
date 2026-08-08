@@ -8,10 +8,7 @@ import {
   type ApprovalRequest,
   type RepairManifest,
 } from "@accesspath/contracts";
-import type {
-  CanUseTool,
-  PermissionResult,
-} from "@qoder-ai/qoder-agent-sdk";
+import type { CanUseTool, PermissionResult } from "@qoder-ai/qoder-agent-sdk";
 
 import type { RepairAgentMode, RunnerEvent } from "./types";
 
@@ -45,6 +42,55 @@ export function matchesAllowedPath(
   const normalized = portable(relativePath);
   return allowedGlobs.some((pattern) =>
     globExpression(pattern).test(normalized),
+  );
+}
+
+function globRoot(pattern: string): string {
+  const normalized = portable(pattern).replace(/\/+$/, "");
+  if (normalized === "**") {
+    return ".";
+  }
+  if (!normalized.endsWith("/**")) {
+    return "";
+  }
+  const root = normalized.slice(0, -3).replace(/\/+$/, "");
+  return /[*?[\]{}]/.test(root) ? "" : root;
+}
+
+export function matchesAllowedSearchRoot(
+  relativePath: string,
+  allowedGlobs: readonly string[],
+): boolean {
+  const normalized = portable(relativePath).replace(/\/+$/, "");
+  return allowedGlobs.some((pattern) => {
+    const root = globRoot(pattern).replace(/\/+$/, "");
+    if (root === ".") {
+      return true;
+    }
+    return (
+      root !== "" && (normalized === root || normalized.startsWith(`${root}/`))
+    );
+  });
+}
+
+function hasUnsafeSearchPattern(
+  toolName: string,
+  input: Record<string, unknown>,
+): boolean {
+  const pattern =
+    toolName === "Glob"
+      ? input.pattern
+      : toolName === "Grep"
+        ? input.glob
+        : undefined;
+  if (typeof pattern !== "string") {
+    return false;
+  }
+  const normalized = portable(pattern);
+  return (
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:\//.test(normalized) ||
+    normalized.split("/").includes("..")
   );
 }
 
@@ -114,21 +160,19 @@ export interface ToolPolicyOptions {
   mode: RepairAgentMode;
   recordApproval?: (request: ApprovalRequest) => Promise<void>;
   repairSessionId: string;
-  requestApproval: (
-    request: ApprovalRequest,
-  ) => Promise<ApprovalDecision>;
+  requestApproval: (request: ApprovalRequest) => Promise<ApprovalDecision>;
   worktreePath: string;
 }
 
 export function createToolPolicy(options: ToolPolicyOptions): CanUseTool {
+  const sessionApprovals = new Set<string>();
   return async (toolName, input, toolOptions) => {
     const path = requestedPath(toolName, input);
     let targetPath: string | undefined;
     if (path !== undefined) {
       try {
-        targetPath = (
-          await resolveWorktreePath(options.worktreePath, path)
-        ).relativePath;
+        targetPath = (await resolveWorktreePath(options.worktreePath, path))
+          .relativePath;
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Path validation failed.";
@@ -141,13 +185,49 @@ export function createToolPolicy(options: ToolPolicyOptions): CanUseTool {
     }
 
     if (toolName === "Read" || toolName === "Glob" || toolName === "Grep") {
+      const allowedReadGlobs =
+        options.manifest.readPathGlobs ?? options.manifest.allowedPathGlobs;
+      const inScope =
+        targetPath !== undefined &&
+        !hasUnsafeSearchPattern(toolName, input) &&
+        (toolName === "Read"
+          ? matchesAllowedPath(targetPath, allowedReadGlobs)
+          : matchesAllowedSearchRoot(targetPath, allowedReadGlobs));
+      if (!inScope) {
+        const message =
+          "The requested read or search is outside the approved read scope.";
+        await options.emit({
+          type: "tool.denied",
+          payload: {
+            toolName,
+            reason: message,
+            targetPaths: targetPath === undefined ? [] : [targetPath],
+          },
+        });
+        return denial(message);
+      }
+      const activityPayload = {
+        toolName,
+        risk: "read",
+        targetPaths: targetPath === undefined ? [] : [targetPath],
+        toolUseId: toolOptions.toolUseID,
+        ...(toolName === "Glob" && typeof input.pattern === "string"
+          ? { pattern: input.pattern }
+          : {}),
+        ...(toolName === "Grep" && typeof input.query === "string"
+          ? { query: input.query }
+          : {}),
+        ...(toolName === "Grep" && typeof input.glob === "string"
+          ? { glob: input.glob }
+          : {}),
+      };
       await options.emit({
         type: "tool.approved",
-        payload: {
-          toolName,
-          risk: "read",
-          targetPaths: targetPath === undefined ? [] : [targetPath],
-        },
+        payload: activityPayload,
+      });
+      await options.emit({
+        type: "tool.started",
+        payload: activityPayload,
       });
       return { behavior: "allow" };
     }
@@ -174,7 +254,8 @@ export function createToolPolicy(options: ToolPolicyOptions): CanUseTool {
       targetPath === undefined ||
       !matchesAllowedPath(targetPath, options.manifest.allowedPathGlobs)
     ) {
-      const message = "The requested edit is outside the approved source scope.";
+      const message =
+        "The requested edit is outside the approved source scope.";
       await options.emit({
         type: "tool.denied",
         payload: {
@@ -184,6 +265,31 @@ export function createToolPolicy(options: ToolPolicyOptions): CanUseTool {
         },
       });
       return denial(message);
+    }
+
+    const sessionApprovalKey = `${toolName}:${targetPath}`;
+    if (sessionApprovals.has(sessionApprovalKey)) {
+      await options.emit({
+        type: "tool.approved",
+        payload: {
+          decision: "approve-session",
+          toolName,
+          targetPaths: [targetPath],
+        },
+      });
+      await options.emit({
+        type: "tool.started",
+        payload: {
+          decision: "approve-session",
+          toolName,
+          targetPaths: [targetPath],
+          toolUseId: toolOptions.toolUseID,
+        },
+      });
+      return {
+        behavior: "allow",
+        toolUseID: toolOptions.toolUseID,
+      };
     }
 
     const request = ApprovalRequestSchema.parse({
@@ -219,6 +325,9 @@ export function createToolPolicy(options: ToolPolicyOptions): CanUseTool {
         },
       });
       return denial(decision.reason ?? "The edit was denied.");
+    }
+    if (decision.decision === "approve-session") {
+      sessionApprovals.add(sessionApprovalKey);
     }
     await options.emit({
       type: "tool.approved",

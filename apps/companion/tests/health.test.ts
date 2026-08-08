@@ -1,4 +1,7 @@
 import os from "node:os";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import {
@@ -11,6 +14,13 @@ import {
 describe("GET /api/health", () => {
   let server: FastifyInstance | undefined;
   const launchToken = "test-launch-token";
+  const temporaryDirectories: string[] = [];
+
+  async function temporaryDirectory(prefix: string): Promise<string> {
+    const directory = await mkdtemp(join(tmpdir(), prefix));
+    temporaryDirectories.push(directory);
+    return directory;
+  }
 
   function authorizedHeaders(
     overrides: Record<string, string> = {},
@@ -27,6 +37,11 @@ describe("GET /api/health", () => {
       await stop(server);
       server = undefined;
     }
+    await Promise.all(
+      temporaryDirectories
+        .splice(0)
+        .map((directory) => rm(directory, { recursive: true, force: true })),
+    );
   });
 
   it("returns 200 with status, schemaVersion and an ISO timestamp", async () => {
@@ -115,6 +130,35 @@ describe("GET /api/health", () => {
 
     await expect(start({ host: "0.0.0.0", port: 0 })).rejects.toThrow(
       /127\.0\.0\.1/,
+    );
+  });
+
+  it("fails readiness when persisted mission recovery cannot be read", async () => {
+    const artifactRoot = await temporaryDirectory(
+      "health-recovery-artifacts-",
+    );
+    const repositoryRoot = await temporaryDirectory(
+      "health-recovery-repository-",
+    );
+    await mkdir(join(artifactRoot, "missions", "broken-mission"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(
+        artifactRoot,
+        "missions",
+        "broken-mission",
+        "mission.json",
+      ),
+      "{not-json}\n",
+    );
+    server = createServer({
+      launchToken,
+      artifactRoot,
+      editableRepositoryRoot: repositoryRoot,
+    });
+    await expect(server.ready()).rejects.toThrow(
+      "Mission recovery failed for broken-mission.",
     );
   });
 });

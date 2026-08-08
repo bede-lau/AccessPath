@@ -8,11 +8,18 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "node ../../scripts/dev.mjs",
+    "dev:worker": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "test": "vitest run --config vitest.config.ts",
     "test:e2e": "playwright test --config playwright.config.ts",
+    "accesspath:replay": "node --import tsx scripts/accesspath-replay.ts",
     "health": "tsx scripts/health.ts",
     "reset": "tsx scripts/reset.ts"
+  },
+  "dependencies": {
+    "@accesspath/audit-engine": "0.1.0",
+    "@accesspath/contracts": "0.1.0",
+    "@accesspath/evidence": "0.1.0"
   }
 }

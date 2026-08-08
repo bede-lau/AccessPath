@@ -17,6 +17,50 @@ import {
 const PREVIEW_POLL_INTERVAL_MS = 100;
 const PREVIEW_READY_TIMEOUT_MS = 15_000;
 
+export function replayOutcomeSupportsFindingVerification(
+  outcome: AuditBundle["outcome"],
+): boolean {
+  return outcome === "passed" || outcome === "blocked";
+}
+
+function replayStepRegressed(
+  beforeState: AuditBundle["steps"][number]["state"],
+  afterState: AuditBundle["steps"][number]["state"] | undefined,
+): boolean {
+  if (beforeState === "passed") {
+    return afterState !== "passed";
+  }
+  if (beforeState === "observation") {
+    return afterState !== "passed" && afterState !== "observation";
+  }
+  return false;
+}
+
+export function replayHasTaskRegression(
+  before: AuditBundle,
+  after: AuditBundle,
+): boolean {
+  const afterByInstruction = new Map(
+    after.steps.map((step) => [step.instructionId, step]),
+  );
+  return before.steps.some((step) =>
+    replayStepRegressed(
+      step.state,
+      afterByInstruction.get(step.instructionId)?.state,
+    ),
+  );
+}
+
+export function replayHasNewFindings(
+  before: AuditBundle,
+  after: AuditBundle,
+): boolean {
+  const beforeFindingIds = new Set(
+    before.findings.map((finding) => finding.id),
+  );
+  return after.findings.some((finding) => !beforeFindingIds.has(finding.id));
+}
+
 function isLoopback(hostname: string): boolean {
   return (
     hostname === "127.0.0.1" ||
@@ -71,6 +115,8 @@ export function compareReplayEvidence(
   selectedFindingIds: readonly string[],
 ): FindingComparison[] {
   const selected = new Set(selectedFindingIds);
+  const taskRegressed = replayHasTaskRegression(before, after);
+  const hasNewFindings = replayHasNewFindings(before, after);
   const afterById = new Map(
     after.findings.map((finding) => [finding.id, finding]),
   );
@@ -96,7 +142,9 @@ export function compareReplayEvidence(
       const replayStep = stepsByInstruction.get(finding.stepId);
       const resolved =
         selected.has(finding.id) &&
-        after.outcome === "passed" &&
+        replayOutcomeSupportsFindingVerification(after.outcome) &&
+        !taskRegressed &&
+        !hasNewFindings &&
         replayStep?.state === "passed";
       return FindingComparisonSchema.parse({
         findingId: finding.id,
@@ -108,7 +156,48 @@ export function compareReplayEvidence(
         evidenceIds: replayStep?.evidence.map((artifact) => artifact.id) ?? [],
       });
     })
+    .concat(
+      after.findings
+        .filter((finding) => !before.findings.some(({ id }) => id === finding.id))
+        .map((finding) =>
+          FindingComparisonSchema.parse({
+            findingId: finding.id,
+            beforeState: "open",
+            afterState: "regressed",
+            explanation:
+              "The repaired browser replay introduced a finding that was not present in the staging evidence.",
+            evidenceIds: finding.evidenceIds,
+          }),
+        ),
+    )
     .sort((left, right) => left.findingId.localeCompare(right.findingId));
+}
+
+export function replayVerificationIsAcceptable(
+  before: AuditBundle,
+  after: AuditBundle,
+  selectedFindingIds: readonly string[],
+): boolean {
+  if (
+    !replayOutcomeSupportsFindingVerification(after.outcome) ||
+    replayHasTaskRegression(before, after) ||
+    replayHasNewFindings(before, after)
+  ) {
+    return false;
+  }
+  const comparison = compareReplayEvidence(
+    before,
+    after,
+    selectedFindingIds,
+  );
+  return (
+    selectedFindingIds.every(
+      (findingId) =>
+        comparison.find((entry) => entry.findingId === findingId)
+          ?.afterState === "resolved",
+    ) &&
+    comparison.every((entry) => entry.afterState !== "regressed")
+  );
 }
 
 export async function waitForPreview(

@@ -16,6 +16,23 @@ export {
   type PersistedAuditOptions,
   type PersistedAuditResult,
 } from "./audit-pipeline";
+export {
+  MissionInputError,
+  MissionNotFoundError,
+  MissionPlanningError,
+  MissionRevisionError,
+  MissionService,
+  MissionStateError,
+  type MissionPlanStep,
+  type MissionPlanningFunction,
+  type MissionProofItem,
+  type MissionReconnaissance,
+  type MissionResource,
+  type MissionServiceConfig,
+  type MissionSourceAcquirer,
+  type MissionState,
+  type MissionTaskMapper,
+} from "./mission-service";
 
 async function main(): Promise<void> {
   const config = loadEnv();
@@ -23,7 +40,13 @@ async function main(): Promise<void> {
     host: config.host,
     port: config.port,
     artifactRoot: config.artifactRoot,
+    allowedOrigins: [
+      `http://127.0.0.1:${config.consolePort}`,
+      `http://localhost:${config.consolePort}`,
+    ],
     demoAidAppPort: config.demoAidAppPort,
+    missionDemoAgentInactivityTimeoutMs: config.demoAgentInactivityTimeoutMs,
+    missionDemoAgentHardTimeoutMs: config.demoAgentHardTimeoutMs,
     launchToken: config.launchToken,
   });
 

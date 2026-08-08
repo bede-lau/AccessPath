@@ -192,6 +192,36 @@ export default [
     },
   },
 
+  // The fixture's replay CLI is deliberately the only bridge into the audit
+  // packages. It creates a source-side bundle for integration testing; all
+  // other demo app code stays standalone.
+  {
+    files: [
+      "apps/demo-aid-app/scripts/accesspath-replay.ts",
+      "apps/demo-aid-app/tests/accesspath-replay.test.ts",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "@accesspath/*",
+                "!@accesspath/audit-engine",
+                "!@accesspath/contracts",
+                "!@accesspath/evidence",
+              ],
+              message:
+                "The demo replay integration may import only audit-engine, " +
+                "contracts, and evidence.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   // packages/contracts: isomorphic — zod only, no Node built-ins, no internals.
   {
     files: ["packages/contracts/**/*.{ts,tsx}"],

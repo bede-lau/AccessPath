@@ -184,18 +184,17 @@ code use the available workspace width.
 
 ## Layout
 
-Desktop uses a compact navigation rail, a 56px contextual header, and a
-full-height work area. Audit setup pairs one unframed form column with a sticky
-320px run ledger. Live audit uses a compact path source list, a dominant
-evidence stage, and a findings inspector. Barrier Map uses a wide journey
-canvas with a persistent evidence inspector. Repair uses a dominant diff
-workspace between a collapsible evidence brief and a verification inspector.
+Desktop uses a compact product header and a full-height Mission Workspace.
+Before Run, one unframed mission form sits beside an inline editable plan.
+After Run, the Proof Thread becomes the persistent source list with three
+ordered stages: Observed, Scoped repair, and Verified. The selected stage owns
+the dominant evidence, diagnosis, diff, or verification work surface while a
+compact inspector holds exact scope, provenance, and available commands.
 
-At medium widths, the rail collapses and inspectors become switchable panes.
-Below 768px, navigation moves to the bottom, command actions sit in a stable
-action dock, Barrier Map defaults to its linear representation, and repair
-opens on the diff with Evidence and Verification tabs. All screens reflow to
-320 CSS pixels without horizontal page overflow.
+At medium widths, the inspector becomes a switchable pane. Below 768px, the
+Proof Thread becomes a horizontal step control, commands sit in a stable action
+dock, and evidence, repair, and verification details remain in document order.
+All screens reflow to 320 CSS pixels without horizontal page overflow.
 
 Spacing follows a 4/8/12/16/24/32/48px rhythm. Major regions use whitespace and
 one divider, not floating section cards. Fixed-format panes, screenshot stages,
@@ -261,10 +260,10 @@ icons.
 
 ### Navigation
 
-The desktop rail uses icon and text labels with a subtle selected background
-and a blue leading indicator. The contextual header contains breadcrumb,
-current object, durable state, companion freshness, and route-valid commands.
-Mobile uses a five-item bottom navigation with labels and stable touch targets.
+The product header contains the AccessPath identity, current mission, durable
+state, companion freshness, and route-valid commands. The Proof Thread uses
+icon and text labels with a blue current-stage indicator. Mobile preserves all
+three stage labels in a stable, keyboard-operable step control.
 
 ### Status Mark
 
@@ -274,10 +273,11 @@ separate signals.
 
 ### Authority Gate
 
-Plan, tool, patch, and rewind approval use a dedicated authority region with
-the exact action, consequence, scope, risk, and available decision. Approval
-focus moves to the gate heading and returns to the invoking control when the
-decision resolves.
+The repair authorization and final patch acceptance use dedicated authority
+regions with the exact action, source snapshot, task hash, approved paths,
+commands, sandbox policy, consequence, and available decision. Focus moves to
+the gate heading and returns to the invoking control when the decision
+resolves.
 
 ### Loading Scaffold
 
@@ -308,5 +308,6 @@ navigation and line gutters.
   pill.
 - **Don't** animate high-frequency event rows or use decorative continuous
   motion.
-- **Don't** hide map information from the synchronized linear representation.
+- **Don't** split the Proof Thread into separate setup, findings, and repair
+  routes.
 - **Don't** use vague authority actions such as Continue.

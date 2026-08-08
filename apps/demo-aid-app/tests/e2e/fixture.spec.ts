@@ -48,7 +48,7 @@ test("AP-001 blocks keyboard selection while the assisted path remains testable"
   await page.getByRole("button", { name: "Review application" }).click();
 
   const submit = page.getByRole("button", {
-    name: "Submit test application",
+    name: "Submit application",
   });
   await submit.click();
   await expect(page.getByTestId("review-error-summary")).toBeVisible();
@@ -59,7 +59,7 @@ test("AP-001 blocks keyboard selection while the assisted path remains testable"
 
   await page
     .getByRole("checkbox", {
-      name: "I confirm this application contains fictional test information only",
+      name: "I confirm the information in this application is accurate",
     })
     .check();
   await submit.click();

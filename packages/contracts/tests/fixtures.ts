@@ -219,7 +219,7 @@ export const repairSessionFixture: RepairSession = {
   },
   branch: "accesspath/repair-0001",
   worktreeId: "wt-0001",
-  qoderSessionId: "qoder-0001",
+  qoderSessionId: "11111111-1111-4111-8111-111111111111",
   latestCheckpointId: "chk-0001",
 };
 

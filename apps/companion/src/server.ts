@@ -13,7 +13,12 @@ import {
   type ErrorCode,
 } from "@accesspath/contracts";
 import { GitWorkspaceError } from "@accesspath/git-workspace";
-import type { QoderAdapter } from "@accesspath/qoder-runner";
+import {
+  createAgentAdapter,
+  resolveAgentProvider,
+  QoderAuthenticationError,
+  type QoderAdapter,
+} from "@accesspath/qoder-runner";
 
 import {
   AuditNotFoundError,
@@ -21,6 +26,19 @@ import {
   AuditStateError,
   type AuditRunner,
 } from "./audit-service";
+import {
+  MissionInputError,
+  MissionNotFoundError,
+  MissionPlanningError,
+  MissionRevisionError,
+  MissionService,
+  MissionStateError,
+  type MissionDeploymentResolver,
+  type MissionPlanningFunction,
+  type MissionReconnaissance,
+  type MissionSourceAcquirer,
+} from "./mission-service";
+import { DockerCommandSandbox, type CommandSandbox } from "./command-sandbox";
 import { qoderAuthAvailability } from "./qoder-auth";
 import { ProcessSupervisorError } from "./process-supervisor";
 import {
@@ -54,14 +72,16 @@ function tokenMatches(request: FastifyRequest, expected: string): boolean {
   if (!authorization?.startsWith("Bearer ")) {
     return false;
   }
-  const providedBuffer = Buffer.from(
-    authorization.slice("Bearer ".length),
-  );
+  const providedBuffer = Buffer.from(authorization.slice("Bearer ".length));
   const expectedBuffer = Buffer.from(expected);
   return (
     providedBuffer.length === expectedBuffer.length &&
     timingSafeEqual(providedBuffer, expectedBuffer)
   );
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 export interface ServerConfig {
@@ -73,10 +93,26 @@ export interface ServerConfig {
   auditRunner?: AuditRunner;
   qoderAdapter?: QoderAdapter;
   repairCommandRunner?: RepairCommandRunner;
+  missionPlanner?: MissionPlanningFunction;
+  missionCommandSandbox?: CommandSandbox;
+  missionSandboxImage?: string;
+  missionSourceAcquirer?: MissionSourceAcquirer;
+  missionSourceCacheRoot?: string;
+  missionReconnaissance?: MissionReconnaissance;
+  missionDeploymentResolver?: MissionDeploymentResolver;
+  missionDemoAgentInactivityTimeoutMs?: number;
+  missionDemoAgentHardTimeoutMs?: number;
 }
 
 export function createServer(config: ServerConfig = {}): FastifyInstance {
-  const launchToken = config.launchToken ?? randomBytes(32).toString("base64url");
+  const launchToken =
+    config.launchToken ?? randomBytes(32).toString("base64url");
+  const artifactRoot =
+    config.artifactRoot ?? path.join(os.homedir(), ".accesspath");
+  const agentProvider = resolveAgentProvider(process.env);
+  const agentAdapter =
+    config.qoderAdapter ??
+    createAgentAdapter({ artifactRoot, environment: process.env });
   const allowedOrigins = new Set(
     config.allowedOrigins ?? DEFAULT_ALLOWED_ORIGINS,
   );
@@ -85,23 +121,62 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
     logController: new LogController({ disableRequestLogging: true }),
   });
   const auditService = new AuditService({
-    artifactRoot: config.artifactRoot ?? path.join(os.homedir(), ".accesspath"),
+    artifactRoot,
     editableRepositoryRoot:
       config.editableRepositoryRoot ?? DEFAULT_REPOSITORY_ROOT,
     runner: config.auditRunner,
   });
   const repairService = new RepairService({
-    artifactRoot: config.artifactRoot ?? path.join(os.homedir(), ".accesspath"),
+    artifactRoot,
     commandRunner: config.repairCommandRunner,
     editableRepositoryRoot:
       config.editableRepositoryRoot ?? DEFAULT_REPOSITORY_ROOT,
-    qoderAdapter: config.qoderAdapter,
+    onAgentFailure: (repairId, message) => {
+      server.log.error(
+        { repairId, reason: message },
+        "Agent repair session failed",
+      );
+    },
+    qoderAdapter: agentAdapter,
     replayAuditRunner: config.auditRunner,
+  });
+  const missionService = new MissionService({
+    artifactRoot,
+    editableRepositoryRoot:
+      config.editableRepositoryRoot ?? DEFAULT_REPOSITORY_ROOT,
+    auditService,
+    repairService,
+    qoderAdapter: agentAdapter,
+    planner: config.missionPlanner,
+    commandSandbox:
+      config.missionCommandSandbox ??
+      ((config.missionSandboxImage ?? process.env.ACCESSPATH_SANDBOX_IMAGE) ===
+      undefined
+        ? undefined
+        : new DockerCommandSandbox({
+            artifactRoot,
+            image:
+              config.missionSandboxImage ??
+              process.env.ACCESSPATH_SANDBOX_IMAGE!,
+          })),
+    sourceAcquirer: config.missionSourceAcquirer,
+    sourceCacheRoot: config.missionSourceCacheRoot,
+    reconnaissance: config.missionReconnaissance,
+    deploymentResolver: config.missionDeploymentResolver,
+    demoAgentInactivityTimeoutMs: config.missionDemoAgentInactivityTimeoutMs,
+    demoAgentHardTimeoutMs: config.missionDemoAgentHardTimeoutMs,
   });
   serverTokens.set(server, launchToken);
 
+  server.addHook("onReady", async () => {
+    await missionService.ready();
+  });
+
   server.addHook("onClose", async () => {
-    await repairService.shutdown();
+    await Promise.allSettled([
+      repairService.shutdown(),
+      missionService.shutdown(),
+    ]);
   });
 
   const errorResponse = (
@@ -181,17 +256,28 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
         .code(404)
         .send(errorResponse("NOT_FOUND", error.message, request.id));
     }
+    if (error instanceof MissionNotFoundError) {
+      return reply
+        .code(404)
+        .send(errorResponse("NOT_FOUND", error.message, request.id));
+    }
     if (
       error instanceof AuditStateError ||
-      error instanceof RepairStateError
+      error instanceof RepairStateError ||
+      error instanceof MissionStateError
     ) {
-      return reply
-        .code(409)
-        .send(
-          errorResponse("INVALID_STATE", error.message, request.id, {
-            currentState: error.currentState,
-          }),
-        );
+      return reply.code(409).send(
+        errorResponse("INVALID_STATE", error.message, request.id, {
+          currentState: error.currentState,
+        }),
+      );
+    }
+    if (error instanceof MissionRevisionError) {
+      return reply.code(409).send(
+        errorResponse("INVALID_STATE", error.message, request.id, {
+          currentRevision: error.currentRevision,
+        }),
+      );
     }
     if (error instanceof RepairNotFoundError) {
       return reply
@@ -241,25 +327,30 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
           ),
         );
     }
-    if (
-      error.message.includes("QODER_PERSONAL_ACCESS_TOKEN") ||
-      error.message.includes("auth_not_configured") ||
-      error.message.includes("authentication")
-    ) {
+    if (error instanceof QoderAuthenticationError) {
+      const nextAction =
+        agentProvider === "qwen" || agentProvider === "openai"
+          ? "Set OPENAI_API_KEY, OPENAI_BASE_URL, and OPENAI_MODEL, then generate the mission plan again."
+          : "Sign in to Qoder with qodercli login, then generate the mission plan again.";
       return reply
         .code(409)
+        .send(errorResponse("QODER_AUTH_REQUIRED", nextAction, request.id));
+    }
+    if (error instanceof MissionPlanningError) {
+      return reply
+        .code(502)
         .send(
           errorResponse(
-            "QODER_AUTH_REQUIRED",
-            "Qoder authentication is required for the live adapter.",
+            "INTERNAL",
+            "The selected agent provider could not generate a complete mission plan. Generate the plan again.",
             request.id,
           ),
         );
     }
     if (
       error.name === "ZodError" ||
-      error instanceof SyntaxError ||
-      error.message.includes("required")
+      error instanceof MissionInputError ||
+      error instanceof SyntaxError
     ) {
       return reply
         .code(400)
@@ -298,9 +389,11 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
     return {
       schemaVersion: SCHEMA_VERSION,
       supportsAudit: true,
+      supportsMissions: true,
       supportsRepair: true,
       targetPolicies: ["public", "local-explicit"],
       reportFormats: ["html", "markdown", "json"],
+      agentProvider,
       demoAidAppPort: config.demoAidAppPort ?? 4173,
     };
   });
@@ -337,6 +430,10 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
     };
   });
 
+  server.post("/api/audits/map-target", async (request) => ({
+    task: await auditService.mapTarget(request.body),
+  }));
+
   server.post("/api/audits", async (request, reply) => {
     const audit = await auditService.create(request.body);
     return reply.code(201).send({ audit });
@@ -344,7 +441,9 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
 
   server.get<{ Params: { auditId: string } }>(
     "/api/audits/:auditId",
-    async (request) => ({ audit: await auditService.get(request.params.auditId) }),
+    async (request) => ({
+      audit: await auditService.get(request.params.auditId),
+    }),
   );
 
   server.patch<{ Params: { auditId: string } }>(
@@ -361,6 +460,215 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
     }
     return value;
   };
+
+  const requiredIdempotencyKey = (request: FastifyRequest): string => {
+    const value = idempotencyKey(request);
+    if (value === undefined || value.trim() === "") {
+      throw new MissionInputError("An idempotency key is required.");
+    }
+    return value;
+  };
+
+  const expectedMissionRevision = (request: FastifyRequest): number => {
+    const body = isObject(request.body) ? request.body : {};
+    const header = request.headers["expected-mission-revision"];
+    const raw = Array.isArray(header)
+      ? header[0]
+      : (header ?? body.expectedRevision);
+    const revision =
+      typeof raw === "number"
+        ? raw
+        : typeof raw === "string" && raw.trim() !== ""
+          ? Number(raw)
+          : Number.NaN;
+    if (!Number.isInteger(revision) || revision < 1) {
+      throw new MissionInputError("An expected mission revision is required.");
+    }
+    return revision;
+  };
+
+  const expectedCreateRevision = (request: FastifyRequest): void => {
+    const header = request.headers["expected-mission-revision"];
+    const raw = Array.isArray(header) ? header[0] : header;
+    if (raw !== "0") {
+      throw new MissionInputError(
+        "Mission creation requires expected mission revision 0.",
+      );
+    }
+  };
+
+  server.post("/api/missions", async (request, reply) => {
+    expectedCreateRevision(request);
+    return reply.code(201).send({
+      mission: await missionService.create(
+        request.body,
+        requiredIdempotencyKey(request),
+      ),
+    });
+  });
+
+  server.get<{ Params: { missionId: string } }>(
+    "/api/missions/:missionId",
+    async (request) => ({
+      mission: await missionService.get(request.params.missionId),
+    }),
+  );
+
+  server.post<{ Params: { missionId: string } }>(
+    "/api/missions/:missionId/compile",
+    async (request) => ({
+      mission: await missionService.compile(
+        request.params.missionId,
+        request.body,
+        requiredIdempotencyKey(request),
+        expectedMissionRevision(request),
+      ),
+    }),
+  );
+
+  server.patch<{ Params: { missionId: string } }>(
+    "/api/missions/:missionId/plan",
+    async (request) => ({
+      mission: await missionService.patchPlan(
+        request.params.missionId,
+        request.body,
+        requiredIdempotencyKey(request),
+        expectedMissionRevision(request),
+      ),
+    }),
+  );
+
+  server.put<{ Params: { missionId: string } }>(
+    "/api/missions/:missionId/plan",
+    async (request) => ({
+      mission: await missionService.patchPlan(
+        request.params.missionId,
+        request.body,
+        requiredIdempotencyKey(request),
+        expectedMissionRevision(request),
+      ),
+    }),
+  );
+
+  server.post<{ Params: { missionId: string } }>(
+    "/api/missions/:missionId/run",
+    async (request, reply) =>
+      reply.code(202).send({
+        mission: await missionService.run(
+          request.params.missionId,
+          requiredIdempotencyKey(request),
+          expectedMissionRevision(request),
+        ),
+      }),
+  );
+
+  server.post<{ Params: { missionId: string } }>(
+    "/api/missions/:missionId/repair-authorization",
+    async (request, reply) =>
+      reply.code(202).send({
+        mission: await missionService.authorizeRepair(
+          request.params.missionId,
+          request.body,
+          requiredIdempotencyKey(request),
+          expectedMissionRevision(request),
+        ),
+      }),
+  );
+
+  server.post<{
+    Params: { missionId: string; authorizationId: string };
+  }>(
+    "/api/missions/:missionId/authorizations/:authorizationId",
+    async (request, reply) =>
+      reply.code(202).send({
+        mission: await missionService.authorizeRepair(
+          request.params.missionId,
+          request.body,
+          requiredIdempotencyKey(request),
+          expectedMissionRevision(request),
+          request.params.authorizationId,
+        ),
+      }),
+  );
+
+  server.post<{ Params: { missionId: string } }>(
+    "/api/missions/:missionId/patch-acceptance",
+    async (request) => ({
+      mission: await missionService.acceptPatch(
+        request.params.missionId,
+        request.body,
+        requiredIdempotencyKey(request),
+        expectedMissionRevision(request),
+      ),
+    }),
+  );
+
+  server.post<{ Params: { missionId: string } }>(
+    "/api/missions/:missionId/accept-patch",
+    async (request) => ({
+      mission: await missionService.acceptPatch(
+        request.params.missionId,
+        { decision: "approve-once" },
+        requiredIdempotencyKey(request),
+        expectedMissionRevision(request),
+      ),
+    }),
+  );
+
+  server.post<{ Params: { missionId: string } }>(
+    "/api/missions/:missionId/merge-verified-patch",
+    async (request) => ({
+      mission: await missionService.mergeVerifiedPatchForDemo(
+        request.params.missionId,
+        requiredIdempotencyKey(request),
+        expectedMissionRevision(request),
+      ),
+    }),
+  );
+
+  server.post<{ Params: { missionId: string } }>(
+    "/api/missions/:missionId/reject-patch",
+    async (request) => ({
+      mission: await missionService.acceptPatch(
+        request.params.missionId,
+        { decision: "deny" },
+        requiredIdempotencyKey(request),
+        expectedMissionRevision(request),
+      ),
+    }),
+  );
+
+  server.post<{ Params: { missionId: string } }>(
+    "/api/missions/:missionId/cancel",
+    async (request) => ({
+      mission: await missionService.cancel(
+        request.params.missionId,
+        requiredIdempotencyKey(request),
+        expectedMissionRevision(request),
+      ),
+    }),
+  );
+
+  server.get<{
+    Params: { missionId: string };
+    Querystring: { format?: string };
+  }>("/api/missions/:missionId/report", async (request, reply) => {
+    const format = request.query.format ?? "json";
+    if (format !== "html" && format !== "markdown" && format !== "json") {
+      throw new MissionInputError("format must be html, markdown, or json.");
+    }
+    const report = await missionService.report(
+      request.params.missionId,
+      format,
+    );
+    reply.header("cache-control", "no-store");
+    reply.header("content-type", report.contentType);
+    reply.header(
+      "content-disposition",
+      `attachment; filename="${report.filename}"`,
+    );
+    return reply.send(report.content);
+  });
 
   server.post<{ Params: { auditId: string } }>(
     "/api/audits/:auditId/start",
@@ -427,10 +735,7 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
           ),
         );
     }
-    const report = await auditService.report(
-      request.params.auditId,
-      format,
-    );
+    const report = await auditService.report(request.params.auditId, format);
     reply.header("cache-control", "no-store");
     reply.header("content-type", report.contentType);
     reply.header(
@@ -455,9 +760,7 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
       approvals: await repairService.listApprovals(request.params.repairId),
       tests: await repairService.tests(request.params.repairId),
       verification: await repairService.verification(request.params.repairId),
-      baseIntegrity: await repairService.baseIntegrity(
-        request.params.repairId,
-      ),
+      baseIntegrity: await repairService.baseIntegrity(request.params.repairId),
     }),
   );
 
@@ -473,7 +776,10 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
     "/api/repairs/:repairId/diagnose",
     async (request, reply) =>
       reply.code(202).send({
-        repair: await repairService.diagnose(request.params.repairId),
+        repair: await repairService.diagnose(
+          request.params.repairId,
+          idempotencyKey(request),
+        ),
       }),
   );
 
@@ -491,7 +797,10 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
   server.post<{ Params: { repairId: string } }>(
     "/api/repairs/:repairId/pause",
     async (request) => ({
-      repair: await repairService.interrupt(request.params.repairId),
+      repair: await repairService.interrupt(
+        request.params.repairId,
+        idempotencyKey(request),
+      ),
     }),
   );
 
@@ -499,7 +808,10 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
     "/api/repairs/:repairId/resume",
     async (request, reply) =>
       reply.code(202).send({
-        repair: await repairService.resume(request.params.repairId),
+        repair: await repairService.resume(
+          request.params.repairId,
+          idempotencyKey(request),
+        ),
       }),
   );
 
@@ -543,17 +855,14 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
 
   server.post<{
     Params: { repairId: string; approvalId: string };
-  }>(
-    "/api/repairs/:repairId/approvals/:approvalId",
-    async (request) => ({
-      approval: await repairService.decideApproval(
-        request.params.repairId,
-        request.params.approvalId,
-        request.body,
-        idempotencyKey(request),
-      ),
-    }),
-  );
+  }>("/api/repairs/:repairId/approvals/:approvalId", async (request) => ({
+    approval: await repairService.decideApproval(
+      request.params.repairId,
+      request.params.approvalId,
+      request.body,
+      idempotencyKey(request),
+    ),
+  }));
 
   server.post<{ Params: { repairId: string } }>(
     "/api/repairs/:repairId/rewind/preview",
@@ -645,11 +954,7 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
     Querystring: { format?: string };
   }>("/api/repairs/:repairId/report", async (request, reply) => {
     const format = request.query.format;
-    if (
-      format !== "html" &&
-      format !== "markdown" &&
-      format !== "json"
-    ) {
+    if (format !== "html" && format !== "markdown" && format !== "json") {
       return reply
         .code(400)
         .send(
@@ -660,10 +965,7 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
           ),
         );
     }
-    const report = await repairService.report(
-      request.params.repairId,
-      format,
-    );
+    const report = await repairService.report(request.params.repairId, format);
     reply.header("cache-control", "no-store");
     reply.header("content-type", report.contentType);
     reply.header(
@@ -677,7 +979,7 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
     Params: { sessionId: string };
     Querystring: { after?: string };
   }>("/api/sessions/:sessionId/events", async (request, reply) => {
-    let sessionType: "audit" | "repair";
+    let sessionType: "audit" | "mission" | "repair";
     try {
       await auditService.get(request.params.sessionId);
       sessionType = "audit";
@@ -685,11 +987,18 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
       if (!(error instanceof AuditNotFoundError)) {
         throw error;
       }
-      await repairService.get(request.params.sessionId);
-      sessionType = "repair";
+      try {
+        await repairService.get(request.params.sessionId);
+        sessionType = "repair";
+      } catch (repairError) {
+        if (!(repairError instanceof RepairNotFoundError)) {
+          throw repairError;
+        }
+        await missionService.get(request.params.sessionId);
+        sessionType = "mission";
+      }
     }
-    const cursor =
-      request.headers["last-event-id"] ?? request.query.after;
+    const cursor = request.headers["last-event-id"] ?? request.query.after;
     reply.hijack();
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -708,7 +1017,9 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
       const events =
         sessionType === "audit"
           ? await auditService.replay(request.params.sessionId, lastCursor)
-          : await repairService.replay(request.params.sessionId, lastCursor);
+          : sessionType === "repair"
+            ? await repairService.replay(request.params.sessionId, lastCursor)
+            : await missionService.replay(request.params.sessionId, lastCursor);
       for (const event of events) {
         reply.raw.write(
           `id: ${event.eventId}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
@@ -718,14 +1029,65 @@ export function createServer(config: ServerConfig = {}): FastifyInstance {
       const state =
         sessionType === "audit"
           ? (await auditService.get(request.params.sessionId)).state
-          : (await repairService.get(request.params.sessionId)).state;
+          : sessionType === "repair"
+            ? (await repairService.get(request.params.sessionId)).state
+            : (await missionService.get(request.params.sessionId)).state;
       if (
         [
+          "attention",
           "completed",
           "blocked",
           "failed",
           "cancelled",
           "rejected",
+          "report-only",
+        ].includes(state)
+      ) {
+        reply.raw.end();
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  });
+
+  server.get<{
+    Params: { missionId: string };
+    Querystring: { after?: string };
+  }>("/api/missions/:missionId/events", async (request, reply) => {
+    await missionService.get(request.params.missionId);
+    const cursor = request.headers["last-event-id"] ?? request.query.after;
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-store",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+      "x-correlation-id": request.id,
+    });
+    let lastCursor = typeof cursor === "string" ? cursor : undefined;
+    let closed = false;
+    request.raw.once("close", () => {
+      closed = true;
+    });
+    while (!closed) {
+      const events = await missionService.replay(
+        request.params.missionId,
+        lastCursor,
+      );
+      for (const event of events) {
+        reply.raw.write(
+          `id: ${event.eventId}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+        );
+        lastCursor = event.eventId;
+      }
+      const state = (await missionService.get(request.params.missionId)).state;
+      if (
+        [
+          "attention",
+          "completed",
+          "failed",
+          "cancelled",
+          "report-only",
         ].includes(state)
       ) {
         reply.raw.end();
@@ -768,7 +1130,9 @@ export interface StartConfig extends ServerConfig {
   port?: number;
 }
 
-export async function start(config: StartConfig = {}): Promise<FastifyInstance> {
+export async function start(
+  config: StartConfig = {},
+): Promise<FastifyInstance> {
   const host = config.host ?? LOOPBACK_HOST;
   if (host !== LOOPBACK_HOST) {
     throw new Error(`The companion may bind only to ${LOOPBACK_HOST}.`);

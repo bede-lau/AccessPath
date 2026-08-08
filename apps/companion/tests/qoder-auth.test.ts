@@ -63,6 +63,19 @@ describe("qoder authentication readiness", () => {
     });
   });
 
+  it("recognizes the current qodercli local credential file", async () => {
+    const configDirectory = await temporaryDirectory();
+    await mkdir(join(configDirectory, ".auth"), { recursive: true });
+    await writeFile(join(configDirectory, ".auth", "user"), "credential");
+
+    await expect(
+      qoderAuthAvailability({ QODER_CONFIG_DIR: configDirectory }),
+    ).resolves.toMatchObject({
+      available: true,
+      strategy: "qodercli",
+    });
+  });
+
   it("fails closed for missing, empty, or malformed credential documents", async () => {
     const configDirectory = await temporaryDirectory();
     await writeFile(join(configDirectory, "oauth_creds.json"), "{}");

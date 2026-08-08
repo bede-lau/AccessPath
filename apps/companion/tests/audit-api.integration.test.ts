@@ -78,6 +78,20 @@ describe("companion persisted audit API", () => {
         editableRepositoryRoot: repositoryRoot,
       });
 
+      const mapped = await server.inject({
+        method: "POST",
+        url: "/api/audits/map-target",
+        headers: headers(),
+        payload: { startUrl, targetPolicy: "local-explicit" },
+      });
+      expect(mapped.statusCode).toBe(200);
+      expect(mapped.json().task).toMatchObject({
+        id: "task-emergency-aid-application",
+        startUrl,
+        targetPolicy: "local-explicit",
+      });
+      expect(mapped.json().task.expectedSteps).toHaveLength(11);
+
       const created = await server.inject({
         method: "POST",
         url: "/api/audits",

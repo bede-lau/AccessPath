@@ -28,20 +28,39 @@ const EXPECTED_SCRIPTS = [
   "test:e2e",
   "test:security",
   "test:a11y",
+  "test:agent:live",
   "test:qoder:live",
+  "sandbox:build",
   "demo:reset",
+  "workspace:reset",
   "demo:verify",
 ];
 
 describe("root package.json scripts", () => {
-  it("declares the Gate A scripts plus the explicit live Qoder gate", () => {
+  it("declares the Gate A scripts plus explicit live agent gates", () => {
     const manifest = JSON.parse(
       readFileSync(path.join(repoRoot, "package.json"), "utf8"),
     ) as { scripts?: Record<string, string> };
     const names = Object.keys(manifest.scripts ?? {});
     expect(names.sort()).toEqual([...EXPECTED_SCRIPTS].sort());
     expect(manifest.scripts?.["demo:reset"]).toContain("demo-reset.ts");
+    expect(manifest.scripts?.["workspace:reset"]).toBe(
+      manifest.scripts?.["demo:reset"],
+    );
+    expect(manifest.scripts?.["sandbox:build"]).toContain(
+      "docker/sandbox/Dockerfile",
+    );
     expect(manifest.scripts?.["demo:verify"]).toContain("demo-verify.ts");
+    expect(manifest.scripts?.dev).toContain("--env-file-if-exists=.env");
+    expect(manifest.scripts?.["test:qoder:live"]).toContain(
+      "--env-file-if-exists=.env",
+    );
+    expect(manifest.scripts?.["test:agent:live"]).toContain(
+      "qoder-live-smoke.ts",
+    );
+    expect(manifest.scripts?.["test:qoder:live"]).toContain(
+      "--provider qoder",
+    );
   });
 });
 

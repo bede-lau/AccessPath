@@ -143,4 +143,36 @@ describe("repair entities", () => {
     const { worktreeId: _worktreeId, ...sessionMissing } = repairSessionFixture;
     expect(() => RepairSessionSchema.parse(sessionMissing)).toThrow();
   });
+
+  it("bounds repair context and accepts persisted Qoder usage", () => {
+    expect(() =>
+      RepairManifestSchema.parse({
+        ...repairManifestFixture,
+        constraints: Array.from({ length: 17 }, (_, index) => `constraint ${index}`),
+      }),
+    ).toThrow();
+
+    const parsed = RepairSessionSchema.parse({
+      ...repairSessionFixture,
+      activeQoderTurnId: "qoder-turn-0001",
+      qoderTurns: [
+        {
+          id: "qoder-turn-0001",
+          mode: "repair",
+          status: "running",
+          startedAt: "2026-07-29T10:06:00.000Z",
+          qoderSessionId: "11111111-1111-4111-8111-111111111111",
+          userMessageId: "22222222-2222-4222-8222-222222222222",
+          resumed: true,
+          requestedModel: "efficient",
+          maxTurns: 8,
+        },
+      ],
+    });
+    expect(parsed.qoderTurns?.[0]).toMatchObject({
+      requestedModel: "efficient",
+      maxTurns: 8,
+      resumed: true,
+    });
+  });
 });

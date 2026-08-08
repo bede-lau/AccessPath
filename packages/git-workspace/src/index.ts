@@ -49,7 +49,9 @@ const OWNER = "@accesspath/git-workspace";
 export { GitCommandError } from "./git";
 export {
   GitWorkspaceError,
+  SourceAcquisitionError,
   WorkspacePathError,
+  type AcquiredSource,
   type BaseIntegritySnapshot,
   type CleanupWorkspaceOptions,
   type GitDiffSnapshot,
@@ -60,7 +62,15 @@ export {
   type PreparedWorkspace,
   type PrepareWorkspaceOptions,
   type RepositoryValidation,
+  type SourceAcquirerOptions,
+  type SourceAcquisitionErrorCode,
 } from "./types";
+
+export {
+  SOURCE_CACHE_OWNERSHIP_MARKER,
+  SourceAcquirer,
+  acquireSource,
+} from "./source-acquirer";
 
 function repositoryError(message: string): GitWorkspaceError {
   return new GitWorkspaceError("REPOSITORY_INVALID", message);
@@ -488,6 +498,35 @@ export async function getTreeSnapshot(
     treeId: treeResult.stdout.trim(),
     entries,
   };
+}
+
+export async function restorePathsFromTree(
+  repositoryPath: string,
+  treeId: string,
+  paths: readonly string[],
+): Promise<void> {
+  if (!/^[a-f0-9]{40,64}$/i.test(treeId)) {
+    throw repositoryError("Git tree id is invalid.");
+  }
+  if (paths.length === 0) {
+    return;
+  }
+
+  const repositoryRoot = await resolveRepositoryTopLevel(repositoryPath);
+  const normalizedPaths = await Promise.all(
+    paths.map(async (path) => {
+      await resolveContainedPath(repositoryRoot, path);
+      return path.replaceAll("\\", "/");
+    }),
+  );
+  await git(repositoryRoot, [
+    "restore",
+    `--source=${treeId}`,
+    "--staged",
+    "--worktree",
+    "--",
+    ...normalizedPaths,
+  ]);
 }
 
 export async function assertBaseIntegrity(

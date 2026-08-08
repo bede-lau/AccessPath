@@ -6,7 +6,8 @@
 //   packages/<engine>             → @accesspath/contracts only
 //   apps/companion                → contracts + the four engine packages
 //   apps/console                  → contracts ONLY; must NOT declare fastify
-//   apps/demo-aid-app             → no internal deps
+//   apps/demo-aid-app             → standalone, except its audit replay script
+//                                      may use audit-engine, contracts, and evidence
 //   No app may depend on another app anywhere.
 
 import fs from "node:fs";
@@ -46,7 +47,13 @@ const RULES = {
     internalAllowed: ["@accesspath/contracts"],
     forbiddenExternal: ["fastify"],
   },
-  "@accesspath/demo-aid-app": { internalAllowed: [] },
+  "@accesspath/demo-aid-app": {
+    internalAllowed: [
+      "@accesspath/audit-engine",
+      "@accesspath/contracts",
+      "@accesspath/evidence",
+    ],
+  },
 };
 
 const DEP_SECTIONS = [

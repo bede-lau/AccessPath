@@ -203,9 +203,15 @@ describe("artifact and bundle persistence", () => {
     );
 
     const reports = await regenerateReportsFromPersistedEvidence(layout);
-    expect(reports.markdown).toContain("## Limitations and residual risk");
+    expect(reports.markdown).toContain(
+      "## Limitations and checks still needed",
+    );
+    expect(reports.markdown).toContain("## Problems found");
+    expect(reports.markdown).toContain("**What happened:**");
+    expect(reports.markdown).toContain("#### Technical details");
     expect(reports.markdown).toContain("manual-review-required");
     expect(reports.html).toContain("<!doctype html>");
+    expect(reports.html).toContain("<summary>Technical details</summary>");
     expect(reports.html).not.toMatch(/<script|https?:\/\/[^<]*\.js/i);
     expect(JSON.parse(reports.json).id).toBe("bundle-report");
     expect(await readFile(layout.markdownReportPath, "utf8")).toBe(

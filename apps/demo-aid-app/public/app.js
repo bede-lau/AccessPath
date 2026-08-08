@@ -16,7 +16,8 @@
     "[data-testid='review-error-summary']",
   );
   const confirmationError = document.querySelector("#confirmation-error");
-  const fictionalConfirmation = reviewForm.elements.fictionalDataConfirmed;
+  const applicationConfirmation =
+    reviewForm.elements.applicationAccuracyConfirmed;
 
   const application = {
     eligibility: "",
@@ -113,18 +114,18 @@
 
   reviewForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (!fictionalConfirmation.checked) {
+    if (!applicationConfirmation.checked) {
       // AP-004 is intentional: show the summary without focusing it and without
       // linking the summary text to the invalid control.
       reviewErrorSummary.hidden = false;
       confirmationError.hidden = false;
-      fictionalConfirmation.setAttribute("aria-invalid", "true");
+      applicationConfirmation.setAttribute("aria-invalid", "true");
       return;
     }
 
     reviewErrorSummary.hidden = true;
     confirmationError.hidden = true;
-    fictionalConfirmation.removeAttribute("aria-invalid");
+    applicationConfirmation.removeAttribute("aria-invalid");
 
     const submitButton = reviewForm.querySelector("button[type='submit']");
     submitButton.disabled = true;
@@ -134,11 +135,11 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           ...application,
-          fictionalDataConfirmed: true,
+          applicationAccuracyConfirmed: true,
         }),
       });
       if (!response.ok) {
-        throw new Error("The local test submission could not be stored.");
+        throw new Error("The application could not be submitted.");
       }
       const result = await response.json();
       document.querySelector("[data-submission-reference]").textContent =
@@ -149,7 +150,7 @@
     } catch {
       reviewErrorSummary.hidden = false;
       reviewErrorSummary.querySelector("p").textContent =
-        "The local test submission could not be stored. Try again.";
+        "The application could not be submitted. Try again.";
     } finally {
       submitButton.disabled = false;
     }

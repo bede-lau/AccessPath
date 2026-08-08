@@ -119,7 +119,7 @@ async function checksForStep(
       ap004FocusStayedOnSubmit: await page.evaluate(
         () =>
           document.activeElement?.textContent?.trim() ===
-          "Submit test application",
+          "Submit application",
       ),
     };
   }
@@ -406,9 +406,9 @@ export async function runAudit(
             .getByText(instruction.action.kind === "click" ? instruction.action.name : "")
             .click();
           observedOutcome =
-            "Unassisted reviewed radio action failed. A bounded pointer-only test assist selected the fixture option so downstream barriers could be observed.";
+            "Keyboard selection did not work. AccessPath used a recorded mouse action to continue checking later steps, but this step remained blocked.";
           limitations.push(
-            "AP-001 required a recorded pointer-only test assist. The unassisted task path remained blocked and was not classified as successful.",
+            "AP-001 could not be completed with a keyboard. AccessPath used a recorded mouse action only to check later steps; AP-001 still counted as blocked.",
           );
           await emit("audit.step.blocked", {
             instructionId: instruction.id,
@@ -536,7 +536,7 @@ export async function runAudit(
       diagnostic = {
         code: "TASK_BLOCKED",
         message: hadBlockedStep
-          ? "The unassisted task path was blocked; downstream observations used a recorded test assist."
+          ? "The task could not continue by keyboard. AccessPath used a recorded mouse action to check the remaining steps."
           : success.failures.join(" "),
         stepId: steps.find((step) => step.state === "blocked")?.instructionId,
       };

@@ -88,7 +88,7 @@ describe("emergency-aid fixture baseline", () => {
     expect(fixtureTaskContract.targetPolicy).toBe("local-explicit");
     expect(fixtureTaskContract.startUrl).toBe("http://127.0.0.1:4173/");
     expect(fixtureTaskContract.success).toEqual({
-      visibleText: "Test application submitted",
+      visibleText: "Application submitted",
       selector: "[data-testid='submission-confirmation']",
     });
     expect(fixtureTaskContract.fixtureValues).toEqual({

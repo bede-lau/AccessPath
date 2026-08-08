@@ -9,7 +9,7 @@ const validSubmission = {
   fullName: " Jordan Example ",
   phone: " 202-555-0148 ",
   assistanceTypes: ["housing"],
-  fictionalDataConfirmed: true,
+  applicationAccuracyConfirmed: true,
 } as const;
 
 describe("InMemoryFixtureStore", () => {
@@ -18,8 +18,8 @@ describe("InMemoryFixtureStore", () => {
     const first = store.submit(parseTestSubmission(validSubmission));
     const second = store.submit(parseTestSubmission(validSubmission));
 
-    expect(first.reference).toBe("TEST-0001");
-    expect(second.reference).toBe("TEST-0002");
+    expect(first.reference).toBe("APP-0001");
+    expect(second.reference).toBe("APP-0002");
     expect(first.fullName).toBe("Jordan Example");
     expect(first.phone).toBe("202-555-0148");
 
@@ -35,19 +35,19 @@ describe("InMemoryFixtureStore", () => {
     expect(store.reset()).toEqual({
       fixtureId: "fixture-test",
       submissions: [],
-      nextReference: "TEST-0001",
+      nextReference: "APP-0001",
     });
   });
 });
 
 describe("parseTestSubmission", () => {
-  it("requires fictional confirmation and at least one assistance type", () => {
+  it("requires application confirmation and at least one assistance type", () => {
     expect(() =>
       parseTestSubmission({
         ...validSubmission,
-        fictionalDataConfirmed: false,
+        applicationAccuracyConfirmed: false,
       }),
-    ).toThrow(/fictional/i);
+    ).toThrow(/confirmation/i);
     expect(() =>
       parseTestSubmission({ ...validSubmission, assistanceTypes: [] }),
     ).toThrow(/assistance type/i);

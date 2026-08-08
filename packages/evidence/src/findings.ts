@@ -126,7 +126,7 @@ export function assertEquivalentFindingViews(
   linear: readonly LinearFindingGroup[],
 ): void {
   if (hashCanonical(barrierMap) !== hashCanonical(linear)) {
-    throw new Error("Barrier Map and linear finding data are not equivalent.");
+    throw new Error("Structured and linear finding data are not equivalent.");
   }
 }
 

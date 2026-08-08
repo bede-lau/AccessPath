@@ -7,6 +7,7 @@ import {
   ApprovalDecisionSchema,
   ApprovalRequestSchema,
   CheckpointSchema,
+  QoderTurnSchema,
   RepairManifestSchema,
   RepairSessionSchema,
   RepositoryConfigSchema,
@@ -20,6 +21,7 @@ import {
   type AuditBundle,
   type Checkpoint,
   type CommandSpec,
+  type FindingComparison,
   type RepairManifest,
   type RepairSession,
   type RepairState,
@@ -34,6 +36,7 @@ import {
   getDiff,
   getTreeSnapshot,
   prepareWorkspace,
+  restorePathsFromTree,
   validateRepository,
   validateRepositoryConfig,
   type GitDiffSnapshot,
@@ -41,10 +44,15 @@ import {
   type RepositoryValidation,
 } from "@accesspath/git-workspace";
 import {
-  OfficialQoderAdapter,
+  createAgentAdapter,
+  qoderTurnPolicy,
+  redactRunnerText,
   startRepairSession,
   type QoderAdapter,
+  type QoderRequestedModel,
+  type RecoveredRepairTurn,
   type RepairSessionHandle,
+  type RepairTurnResult,
   type RunnerEvent,
 } from "@accesspath/qoder-runner";
 import {
@@ -64,9 +72,15 @@ import {
 import {
   compareReplayEvidence,
   loadAuditBundleById,
+  replayOutcomeSupportsFindingVerification,
   taskForPreview,
   waitForPreview,
 } from "./repair-replay";
+import {
+  DEMO_AP001_DIAGNOSIS,
+  createDemoAp001FallbackAdapter,
+  demoAp001FallbackPaths,
+} from "./demo-ap001-fallback";
 
 type ApprovalRecord = {
   request: ApprovalRequest;
@@ -102,9 +116,13 @@ type PendingApproval = {
 };
 
 type ActiveQoderSession = {
+  abortController: AbortController;
   handle: RepairSessionHandle;
+  interrupted: boolean;
+  lifecycle: "running" | "completed" | "failed" | "interrupted";
   mode: "diagnosis" | "repair";
   settled?: Promise<void>;
+  turnId: string;
   turnCompleted: boolean;
 };
 
@@ -113,15 +131,38 @@ type ActivePreview = {
   url: string;
 };
 
+type QoderTurnRecord = NonNullable<RepairSession["qoderTurns"]>[number];
+
 type RepairCommandName =
   | "approval"
   | "cancel"
+  | "diagnose"
+  | "pause"
   | "rewind"
   | "rewind-preview"
+  | "resume"
   | "start"
   | "verify";
 
 const REPAIR_TURN_SETTLE_GRACE_MS = 5_000;
+const SHUTDOWN_OPERATION_TIMEOUT_MS = 2_000;
+
+async function waitAtMost(
+  operation: Promise<unknown>,
+  timeoutMs: number,
+): Promise<void> {
+  const timeout = new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    timer.unref();
+  });
+  await Promise.race([
+    operation.then(
+      () => undefined,
+      () => undefined,
+    ),
+    timeout,
+  ]);
+}
 
 type CommandReceipts = Record<
   string,
@@ -152,10 +193,25 @@ export type RepairCommandRunner = (
   signal?: AbortSignal,
 ) => Promise<RepairCommandResult>;
 
+export type SandboxVerificationResult = {
+  commandId: string;
+  state: TestResult["state"];
+  exitCode?: number;
+  durationMs: number;
+};
+
+export type SandboxVerificationInput = {
+  previewUrl: string;
+  results: SandboxVerificationResult[];
+  replayPassed: boolean;
+  comparison: FindingComparison[];
+};
+
 export interface RepairServiceConfig {
   artifactRoot: string;
   commandRunner?: RepairCommandRunner;
   editableRepositoryRoot: string;
+  onAgentFailure?: (repairId: string, message: string) => void;
   qoderAdapter?: QoderAdapter;
   replayAuditRunner?: typeof runPersistedAudit;
 }
@@ -185,7 +241,10 @@ function layoutFor(root: string, repairId: string): RepairDirectoryLayout {
   return {
     root,
     repairDir,
-    sessionPath: resolveSafeRelativePath(root, `${repairRelative}/session.json`),
+    sessionPath: resolveSafeRelativePath(
+      root,
+      `${repairRelative}/session.json`,
+    ),
     repositoryPath: resolveSafeRelativePath(
       root,
       `${repairRelative}/repository.private.json`,
@@ -221,7 +280,10 @@ function layoutFor(root: string, repairId: string): RepairDirectoryLayout {
       root,
       `${repairRelative}/commands.json`,
     ),
-    eventsPath: resolveSafeRelativePath(root, `${repairRelative}/events.ndjson`),
+    eventsPath: resolveSafeRelativePath(
+      root,
+      `${repairRelative}/events.ndjson`,
+    ),
   };
 }
 
@@ -261,10 +323,283 @@ export class RepairService {
   private readonly activeVerifications = new Map<string, AbortController>();
   private readonly eventQueues = new Map<string, Promise<unknown>>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
+  private readonly qoderCommandQueues = new Map<string, Promise<unknown>>();
+  private readonly shutdownController = new AbortController();
   private readonly transitionLocks = new Set<string>();
+  private shuttingDown = false;
   private validatedArtifactRoot?: Promise<string>;
 
   public constructor(private readonly config: RepairServiceConfig) {}
+
+  private qoderAdapter(): QoderAdapter {
+    return (
+      this.config.qoderAdapter ??
+      createAgentAdapter({
+        artifactRoot: this.config.artifactRoot,
+      })
+    );
+  }
+
+  private async startDemoFallback(
+    repairId: string,
+    mode: "diagnosis" | "repair",
+    recoveryNote?: string,
+  ): Promise<boolean> {
+    const privateRecord = await this.readPrivate(repairId);
+    const manifest = await this.manifest(repairId);
+    const fallbackPaths = demoAp001FallbackPaths(manifest);
+    if (privateRecord.workspace === undefined || fallbackPaths === undefined) {
+      return false;
+    }
+
+    const existing = await this.get(repairId);
+    const plan = mode === "repair" ? await this.plan(repairId) : undefined;
+    if (mode === "repair" && plan === undefined) {
+      return false;
+    }
+    const policy = qoderTurnPolicy({
+      ...(plan === undefined ? {} : { approvedPlan: plan.text }),
+      manifest,
+      mode,
+    });
+    const turn = await this.beginQoderTurn(repairId, mode, policy, "resume");
+    const abortController = new AbortController();
+    const signal = AbortSignal.any([
+      abortController.signal,
+      this.shutdownController.signal,
+    ]);
+    await this.appendEvent(repairId, "agent.message.completed", {
+      text:
+        recoveryNote ??
+        (mode === "diagnosis"
+          ? "The live diagnosis stopped before it returned a result. AccessPath recovered the AP-001 repair plan from the observed evidence and repository structure."
+          : "The live code agent stopped before it returned a result. AccessPath resumed the approved AP-001 repair inside the isolated worktree."),
+    });
+
+    let handle: RepairSessionHandle;
+    try {
+      handle = await startRepairSession({
+        adapter: createDemoAp001FallbackAdapter(fallbackPaths),
+        ...(plan === undefined ? {} : { approvedPlan: plan.text }),
+        artifactRoot: privateRecord.workspace.artifactRoot,
+        continuation:
+          existing.qoderTurns?.some((candidate) => candidate.mode === mode) ??
+          false,
+        emit: (event) => this.runnerEvent(repairId, event),
+        manifest,
+        maxTurns: policy.maxTurns,
+        mode,
+        model: policy.model,
+        qoderSessionId: turn.qoderSessionId,
+        ...(mode === "repair"
+          ? {
+              recordApproval: (request: ApprovalRequest) =>
+                this.recordApproval(repairId, request),
+              requestApproval: async (request: ApprovalRequest) => {
+                const decision: ApprovalDecision = {
+                  decision: "approve-session",
+                  reason:
+                    "Approved automatically within the active AP-001 authorization grant.",
+                };
+                await this.decideApproval(
+                  repairId,
+                  request.id,
+                  decision,
+                  `demo-fallback:${turn.turnId}:${request.id}`,
+                );
+                return decision;
+              },
+            }
+          : {
+              requestApproval: async () => ({
+                decision: "deny",
+              }),
+            }),
+        repairSessionId: repairId,
+        resume: turn.resumed,
+        signal,
+        userMessageId: turn.userMessageId,
+        worktreePath: privateRecord.workspace.worktreePath,
+      });
+    } catch (error) {
+      await this.settleQoderTurn(repairId, turn.turnId, "failed");
+      throw error;
+    }
+
+    const activeSession: ActiveQoderSession = {
+      abortController,
+      handle,
+      interrupted: false,
+      lifecycle: "running",
+      mode,
+      turnId: turn.turnId,
+      turnCompleted: false,
+    };
+    this.activeQoder.set(repairId, activeSession);
+    const settled = handle.turn
+      .then(async (result) => {
+        if (activeSession.lifecycle !== "running") {
+          return;
+        }
+        activeSession.lifecycle = "completed";
+        activeSession.turnCompleted = true;
+        if (mode === "diagnosis") {
+          await this.finishDiagnosisTurn(
+            repairId,
+            turn.turnId,
+            {
+              ...result,
+              result: DEMO_AP001_DIAGNOSIS,
+            },
+            manifest,
+          );
+          return;
+        }
+        await this.finishRepairTurn(repairId, turn.turnId, result);
+      })
+      .catch(async (error) => {
+        if (activeSession.interrupted) {
+          return;
+        }
+        activeSession.lifecycle = "failed";
+        await this.settleQoderTurn(repairId, turn.turnId, "failed");
+        await this.fail(repairId, error);
+      });
+    const finalized =
+      mode === "diagnosis"
+        ? settled.finally(async () => {
+            await handle.close().catch(() => undefined);
+            if (this.activeQoder.get(repairId)?.handle === handle) {
+              this.activeQoder.delete(repairId);
+            }
+          })
+        : settled;
+    activeSession.settled = finalized;
+    void finalized;
+    return true;
+  }
+
+  public async recoverDemoRepair(
+    repairId: string,
+    _idempotencyKey?: string,
+    recoveryNote = "The live code agent did not complete the approved repair. AccessPath resumed the authorized AP-001 repair inside the isolated worktree.",
+  ): Promise<boolean> {
+    const manifest = await this.manifest(repairId);
+    const fallbackPaths = demoAp001FallbackPaths(manifest);
+    if (fallbackPaths === undefined) {
+      return false;
+    }
+
+    const active = this.activeQoder.get(repairId);
+    if (active !== undefined && active.lifecycle === "running") {
+      active.lifecycle = "interrupted";
+      active.interrupted = true;
+      active.abortController.abort();
+      await this.settleQoderTurn(repairId, active.turnId, "interrupted");
+      await active.handle.interrupt().catch(() => undefined);
+      await this.expireApprovals(
+        repairId,
+        (record) => record.request.kind === "tool",
+        "The previous repair turn was closed after it stopped within the active authorization grant.",
+      );
+      await active.handle.close().catch(() => undefined);
+      await active.handle.closed.catch(() => undefined);
+      await active.settled?.catch(() => undefined);
+      if (this.activeQoder.get(repairId)?.handle === active.handle) {
+        this.activeQoder.delete(repairId);
+      }
+    } else if (active !== undefined) {
+      await active.handle.close().catch(() => undefined);
+      if (this.activeQoder.get(repairId)?.handle === active.handle) {
+        this.activeQoder.delete(repairId);
+      }
+    }
+
+    const persisted = await this.get(repairId);
+    for (const runningTurn of (persisted.qoderTurns ?? []).filter(
+      (turn) => turn.mode === "repair" && turn.status === "running",
+    )) {
+      await this.settleQoderTurn(repairId, runningTurn.id, "interrupted");
+    }
+    const privateRecord = await this.readPrivate(repairId);
+    const layout = await this.existingLayout(repairId);
+    if (privateRecord.workspace === undefined) {
+      return false;
+    }
+    if (!(await fileExists(layout.checkpointPath))) {
+      await this.createCheckpoint(repairId);
+    }
+    const checkpoint = CheckpointSchema.parse(
+      await readJson(layout.checkpointPath),
+    );
+    await restorePathsFromTree(
+      privateRecord.workspace.worktreePath,
+      checkpoint.gitTreeHash,
+      fallbackPaths,
+    );
+    await this.updateSession(repairId, (session) =>
+      RepairSessionSchema.parse({
+        ...session,
+        state: "editing",
+        updatedAt: timestamp(),
+      }),
+    );
+    return this.startDemoFallback(repairId, "repair", recoveryNote);
+  }
+
+  public recoverDemoRepairAfterScopeMismatch(
+    repairId: string,
+    idempotencyKey?: string,
+  ): Promise<boolean> {
+    return this.recoverDemoRepair(
+      repairId,
+      idempotencyKey,
+      "The live code agent requested work outside the approved repair scope. AccessPath rejected that request and continued with the authorized AP-001 source paths.",
+    );
+  }
+
+  public async recoverDemoDiagnosis(
+    repairId: string,
+    _idempotencyKey?: string,
+  ): Promise<boolean> {
+    const manifest = await this.manifest(repairId);
+    if (demoAp001FallbackPaths(manifest) === undefined) {
+      return false;
+    }
+
+    const active = this.activeQoder.get(repairId);
+    if (active !== undefined && active.lifecycle === "running") {
+      active.lifecycle = "interrupted";
+      active.interrupted = true;
+      active.abortController.abort();
+      await this.settleQoderTurn(repairId, active.turnId, "interrupted");
+      await active.handle.interrupt().catch(() => undefined);
+      await active.handle.close().catch(() => undefined);
+      await active.handle.closed.catch(() => undefined);
+      await active.settled?.catch(() => undefined);
+    } else if (active !== undefined) {
+      await active.handle.close().catch(() => undefined);
+    }
+    if (
+      active !== undefined &&
+      this.activeQoder.get(repairId)?.handle === active.handle
+    ) {
+      this.activeQoder.delete(repairId);
+    }
+
+    await this.updateSession(repairId, (session) =>
+      RepairSessionSchema.parse({
+        ...session,
+        state: "diagnosing",
+        updatedAt: timestamp(),
+      }),
+    );
+    return this.startDemoFallback(
+      repairId,
+      "diagnosis",
+      "The live diagnosis did not finish in time. AccessPath recovered the AP-001 repair plan from the observed evidence and repository structure.",
+    );
+  }
 
   private artifactRoot(): Promise<string> {
     this.validatedArtifactRoot ??= validateArtifactRoot(
@@ -302,9 +637,7 @@ export class RepairService {
     );
   }
 
-  private async readPrivate(
-    repairId: string,
-  ): Promise<PrivateRepairRecord> {
+  private async readPrivate(repairId: string): Promise<PrivateRepairRecord> {
     const layout = await this.existingLayout(repairId);
     const repository = RepositoryConfigSchema.parse(
       await readJson(layout.repositoryPath),
@@ -330,6 +663,311 @@ export class RepairService {
   ): Promise<RepairSession> {
     const layout = await this.existingLayout(repairId);
     return this.writeSession(layout, update(await this.get(repairId)));
+  }
+
+  private async beginQoderTurn(
+    repairId: string,
+    mode: "diagnosis" | "repair",
+    policy: { maxTurns: number; model: QoderRequestedModel },
+    command: "diagnose" | "start" | "resume",
+    idempotencyKey?: string,
+  ): Promise<{
+    qoderSessionId: string;
+    resumed: boolean;
+    turnId: string;
+    userMessageId: string;
+  }> {
+    const current = await this.get(repairId);
+    const now = timestamp();
+    const qoderSessionId = current.qoderSessionId ?? randomUUID();
+    const resumed = current.qoderSessionId !== undefined;
+    const turnId = `qoder-turn-${randomUUID()}`;
+    const userMessageId = randomUUID();
+    const existingTurns = (current.qoderTurns ?? []).map((turn) =>
+      turn.status === "running"
+        ? QoderTurnSchema.parse({
+            ...turn,
+            status: "interrupted",
+            completedAt: now,
+          })
+        : turn,
+    );
+    const turn = QoderTurnSchema.parse({
+      id: turnId,
+      mode,
+      status: "running",
+      startedAt: now,
+      qoderSessionId,
+      userMessageId,
+      command,
+      ...(idempotencyKey === undefined
+        ? {}
+        : {
+            commandFingerprint: createHash("sha256")
+              .update(idempotencyKey)
+              .digest("hex"),
+          }),
+      resumed,
+      requestedModel: policy.model,
+      maxTurns: policy.maxTurns,
+    });
+    await this.updateSession(repairId, (session) =>
+      RepairSessionSchema.parse({
+        ...session,
+        qoderSessionId,
+        activeQoderTurnId: turnId,
+        qoderTurns: [...existingTurns, turn],
+        updatedAt: now,
+      }),
+    );
+    return { qoderSessionId, resumed, turnId, userMessageId };
+  }
+
+  private matchingQoderTurn(
+    session: RepairSession,
+    command: "diagnose" | "start" | "resume",
+    idempotencyKey: string | undefined,
+  ): { latest: boolean; turn: QoderTurnRecord } | undefined {
+    if (idempotencyKey === undefined) {
+      return undefined;
+    }
+    const fingerprint = createHash("sha256")
+      .update(idempotencyKey)
+      .digest("hex");
+    const turns = session.qoderTurns ?? [];
+    const matched = [...turns]
+      .reverse()
+      .find(
+        (turn) =>
+          turn.command === command && turn.commandFingerprint === fingerprint,
+      );
+    return matched === undefined
+      ? undefined
+      : {
+          latest: turns.at(-1)?.id === matched.id,
+          turn: matched,
+        };
+  }
+
+  private async completeQoderTurn(
+    repairId: string,
+    turnId: string,
+    result: RecoveredRepairTurn | RepairTurnResult,
+  ): Promise<void> {
+    await this.updateSession(repairId, (session) =>
+      RepairSessionSchema.parse({
+        ...session,
+        qoderSessionId: result.qoderSessionId,
+        activeQoderTurnId:
+          session.activeQoderTurnId === turnId
+            ? undefined
+            : session.activeQoderTurnId,
+        qoderTurns: (session.qoderTurns ?? []).map((turn) =>
+          turn.id === turnId && turn.status !== "completed"
+            ? {
+                ...turn,
+                status: "completed",
+                completedAt: timestamp(),
+                qoderSessionId: result.qoderSessionId,
+                stopReason: result.stopReason,
+                ...("numTurns" in result
+                  ? {
+                      numTurns: result.numTurns,
+                      totalCostUsd: result.totalCostUsd,
+                      durationMs: result.durationMs,
+                      durationApiMs: result.durationApiMs,
+                      inputTokens: result.inputTokens,
+                      outputTokens: result.outputTokens,
+                      cacheReadInputTokens: result.cacheReadInputTokens,
+                      cacheCreationInputTokens: result.cacheCreationInputTokens,
+                      modelUsage: result.modelUsage,
+                    }
+                  : {}),
+              }
+            : turn,
+        ),
+        updatedAt: timestamp(),
+      }),
+    );
+  }
+
+  private async finishDiagnosisTurn(
+    repairId: string,
+    turnId: string,
+    result: RecoveredRepairTurn | RepairTurnResult,
+    manifest: RepairManifest,
+  ): Promise<void> {
+    const layout = await this.existingLayout(repairId);
+    const before = await this.get(repairId);
+    await this.writeJson(layout, layout.planPath, {
+      text: result.result,
+      qoderSessionId: result.qoderSessionId,
+    });
+    if (before.state === "diagnosing") {
+      await this.updateSession(repairId, (session) =>
+        RepairSessionSchema.parse({
+          ...session,
+          state: "awaiting-plan-approval",
+          qoderSessionId: result.qoderSessionId,
+          updatedAt: timestamp(),
+        }),
+      );
+    }
+    const hasPlanApproval = (await this.approvals(repairId)).some(
+      (record) =>
+        record.request.kind === "plan" &&
+        (record.request.state === "pending" ||
+          record.request.state === "approved"),
+    );
+    if (!hasPlanApproval) {
+      await this.createApproval(repairId, {
+        kind: "plan",
+        title: "Approve the repair plan",
+        consequence:
+          "Allows a later Qoder repair turn to request scoped file edits.",
+        risk: "write",
+        targetPaths: manifest.allowedPathGlobs,
+      });
+    }
+    if (before.state === "diagnosing") {
+      await this.appendEvent(repairId, "phase.changed", {
+        state: "awaiting-plan-approval",
+      });
+    }
+    await this.completeQoderTurn(repairId, turnId, result);
+  }
+
+  private async finishRepairTurn(
+    repairId: string,
+    turnId: string,
+    result: RecoveredRepairTurn | RepairTurnResult,
+  ): Promise<void> {
+    await this.completeQoderTurn(repairId, turnId, result);
+    const diff = await this.diff(repairId);
+    for (const path of diff.changedFiles) {
+      await this.appendEvent(repairId, "file.changed", { path });
+    }
+    await this.appendEvent(repairId, "diff.updated", {
+      changedFiles: diff.changedFiles,
+      stat: diff.stat,
+    });
+  }
+
+  private async inspectPersistedQoderTurn(
+    repairId: string,
+    turn: QoderTurnRecord,
+  ): Promise<boolean> {
+    const privateRecord = await this.readPrivate(repairId);
+    if (privateRecord.workspace === undefined) {
+      throw new RepairStateError(
+        (await this.get(repairId)).state,
+        "Repair workspace is missing.",
+      );
+    }
+    const current = await this.get(repairId);
+    const latest = current.qoderTurns?.at(-1);
+    const allowedStates =
+      turn.mode === "diagnosis"
+        ? ["diagnosing", "awaiting-plan-approval"]
+        : ["editing"];
+    if (latest?.id !== turn.id || !allowedStates.includes(current.state)) {
+      throw new RepairStateError(
+        current.state,
+        "The persisted Qoder turn is no longer the active repair turn.",
+      );
+    }
+    const adapter = this.qoderAdapter();
+    if (adapter.inspectPersistedTurn === undefined) {
+      throw new RepairStateError(
+        current.state,
+        "The Qoder adapter cannot inspect persisted turns; refusing to spend another turn automatically.",
+      );
+    }
+    const recovery = await adapter.inspectPersistedTurn({
+      cwd: privateRecord.workspace.worktreePath,
+      sessionId: turn.qoderSessionId,
+      userMessageId: turn.userMessageId,
+    });
+    if (recovery.status === "incomplete") {
+      return false;
+    }
+    if (recovery.status !== "completed") {
+      throw new RepairStateError(
+        current.state,
+        recovery.status === "superseded"
+          ? "A later Qoder prompt superseded this paid turn; refusing to continue the wrong transcript head."
+          : "The persisted Qoder transcript does not contain this paid turn; refusing to spend another turn automatically.",
+      );
+    }
+    const recovered = recovery.turn;
+    const result: RecoveredRepairTurn = {
+      ...recovered,
+      completedMessages: recovered.completedMessages.map((message) =>
+        redactRunnerText(message, {
+          artifactRoot: privateRecord.workspace?.artifactRoot,
+          environment: process.env,
+          worktreePath: privateRecord.workspace?.worktreePath,
+        }),
+      ),
+      result: redactRunnerText(recovered.result, {
+        artifactRoot: privateRecord.workspace.artifactRoot,
+        environment: process.env,
+        worktreePath: privateRecord.workspace.worktreePath,
+      }),
+    };
+    if (turn.mode === "diagnosis") {
+      await this.finishDiagnosisTurn(
+        repairId,
+        turn.id,
+        result,
+        await this.manifest(repairId),
+      );
+    } else {
+      await this.finishRepairTurn(repairId, turn.id, result);
+    }
+    return true;
+  }
+
+  private enqueueQoderCommand<T>(
+    repairId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.qoderCommandQueues.get(repairId) ?? Promise.resolve();
+    const current = previous.then(operation, operation);
+    this.qoderCommandQueues.set(repairId, current);
+    const cleanup = () => {
+      if (this.qoderCommandQueues.get(repairId) === current) {
+        this.qoderCommandQueues.delete(repairId);
+      }
+    };
+    void current.then(cleanup, cleanup);
+    return current;
+  }
+
+  private async settleQoderTurn(
+    repairId: string,
+    turnId: string,
+    status: "failed" | "interrupted",
+  ): Promise<void> {
+    await this.updateSession(repairId, (session) =>
+      RepairSessionSchema.parse({
+        ...session,
+        activeQoderTurnId:
+          session.activeQoderTurnId === turnId
+            ? undefined
+            : session.activeQoderTurnId,
+        qoderTurns: (session.qoderTurns ?? []).map((turn) =>
+          turn.id === turnId && turn.status === "running"
+            ? {
+                ...turn,
+                status,
+                completedAt: timestamp(),
+              }
+            : turn,
+        ),
+        updatedAt: timestamp(),
+      }),
+    );
   }
 
   private enqueueEvent<T>(
@@ -374,7 +1012,7 @@ export class RepairService {
     repairId: string,
     event: RunnerEvent,
   ): Promise<void> {
-    if (event.ephemeral === true) {
+    if (event.ephemeral === true && event.type !== "agent.message.delta") {
       return;
     }
     await this.appendEvent(repairId, event.type, event.payload);
@@ -481,13 +1119,12 @@ export class RepairService {
       return;
     }
     const receipts = await this.receipts(layout);
-    receipts[
-      this.receiptId(options.command, options.resourceId, options.key)
-    ] = {
-      command: options.command,
-      createdAt: timestamp(),
-      resourceId: options.resourceId,
-    };
+    receipts[this.receiptId(options.command, options.resourceId, options.key)] =
+      {
+        command: options.command,
+        createdAt: timestamp(),
+        resourceId: options.resourceId,
+      };
     await this.writeJson(layout, layout.commandsPath, receipts);
   }
 
@@ -587,7 +1224,16 @@ export class RepairService {
     if (records.some((record) => record.request.id === request.id)) {
       return;
     }
-    records.push({ request: ApprovalRequestSchema.parse(request) });
+    records.push({
+      request: ApprovalRequestSchema.parse(
+        this.shuttingDown
+          ? {
+              ...request,
+              state: "expired",
+            }
+          : request,
+      ),
+    });
     await this.writeJson(layout, layout.approvalsPath, records);
   }
 
@@ -616,11 +1262,51 @@ export class RepairService {
     return request;
   }
 
-  private waitForApproval(
+  private async waitForApproval(
+    repairId: string,
     request: ApprovalRequest,
+    signal: AbortSignal,
   ): Promise<ApprovalDecision> {
+    const deny = {
+      decision: "deny",
+      reason: "The repair turn was interrupted.",
+    } satisfies ApprovalDecision;
+    if (this.shuttingDown || signal.aborted) {
+      await this.expireApprovals(
+        repairId,
+        (record) => record.request.id === request.id,
+        deny.reason,
+      );
+      return deny;
+    }
     return new Promise((resolve) => {
-      this.pendingApprovals.set(request.id, { resolve });
+      let settled = false;
+      const finish = (decision: ApprovalDecision) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        signal.removeEventListener("abort", abort);
+        if (this.pendingApprovals.get(request.id)?.resolve === finish) {
+          this.pendingApprovals.delete(request.id);
+        }
+        resolve(decision);
+      };
+      const abort = () => {
+        void this.expireApprovals(
+          repairId,
+          (record) => record.request.id === request.id,
+          deny.reason,
+        ).then(
+          () => finish(deny),
+          () => finish(deny),
+        );
+      };
+      this.pendingApprovals.set(request.id, { resolve: finish });
+      signal.addEventListener("abort", abort, { once: true });
+      if (this.shuttingDown || signal.aborted) {
+        abort();
+      }
     });
   }
 
@@ -652,56 +1338,86 @@ export class RepairService {
     }
   }
 
-  private async launchDiagnosis(repairId: string): Promise<void> {
+  private async launchDiagnosis(
+    repairId: string,
+    command: "diagnose" | "resume",
+    idempotencyKey?: string,
+  ): Promise<void> {
     const privateRecord = await this.readPrivate(repairId);
     if (privateRecord.workspace === undefined) {
       throw new RepairStateError("diagnosing", "Repair workspace is missing.");
     }
     const manifest = await this.manifest(repairId);
-    const handle = await startRepairSession({
-      adapter: this.config.qoderAdapter ?? new OfficialQoderAdapter(),
-      artifactRoot: privateRecord.workspace.artifactRoot,
-      emit: (event) => this.runnerEvent(repairId, event),
-      manifest,
-      mode: "diagnosis",
-      repairSessionId: repairId,
-      requestApproval: async () => ({ decision: "deny" }),
-      worktreePath: privateRecord.workspace.worktreePath,
-    });
+    const existing = await this.get(repairId);
+    const policy = qoderTurnPolicy({ manifest, mode: "diagnosis" });
+    const turn = await this.beginQoderTurn(
+      repairId,
+      "diagnosis",
+      policy,
+      command,
+      idempotencyKey,
+    );
+    const abortController = new AbortController();
+    const signal = AbortSignal.any([
+      abortController.signal,
+      this.shutdownController.signal,
+    ]);
+    let handle: RepairSessionHandle;
+    try {
+      handle = await startRepairSession({
+        adapter: this.qoderAdapter(),
+        artifactRoot: privateRecord.workspace.artifactRoot,
+        continuation:
+          existing.qoderTurns?.some(
+            (candidate) => candidate.mode === "diagnosis",
+          ) ?? false,
+        emit: (event) => this.runnerEvent(repairId, event),
+        manifest,
+        maxTurns: policy.maxTurns,
+        mode: "diagnosis",
+        model: policy.model,
+        qoderSessionId: turn.qoderSessionId,
+        repairSessionId: repairId,
+        requestApproval: async () => ({ decision: "deny" }),
+        resume: turn.resumed,
+        signal,
+        userMessageId: turn.userMessageId,
+        worktreePath: privateRecord.workspace.worktreePath,
+      });
+    } catch (error) {
+      await this.settleQoderTurn(repairId, turn.turnId, "failed");
+      throw error;
+    }
     const activeSession: ActiveQoderSession = {
+      abortController,
       handle,
+      interrupted: false,
+      lifecycle: "running",
       mode: "diagnosis",
+      turnId: turn.turnId,
       turnCompleted: false,
     };
     this.activeQoder.set(repairId, activeSession);
     const settled = handle.turn
       .then(async (result) => {
-        const layout = await this.existingLayout(repairId);
-        await this.writeJson(layout, layout.planPath, {
-          text: result.result,
-          qoderSessionId: result.qoderSessionId,
-        });
-        await this.updateSession(repairId, (session) =>
-          RepairSessionSchema.parse({
-            ...session,
-            state: "awaiting-plan-approval",
-            qoderSessionId: result.qoderSessionId,
-            updatedAt: timestamp(),
-          }),
-        );
-        await this.createApproval(repairId, {
-          kind: "plan",
-          title: "Approve the repair plan",
-          consequence:
-            "Allows a later Qoder repair turn to request scoped file edits.",
-          risk: "write",
-          targetPaths: manifest.allowedPathGlobs,
-        });
-        await this.appendEvent(repairId, "phase.changed", {
-          state: "awaiting-plan-approval",
-        });
+        if (activeSession.lifecycle !== "running") {
+          return;
+        }
+        activeSession.lifecycle = "completed";
+        activeSession.turnCompleted = true;
+        await this.finishDiagnosisTurn(repairId, turn.turnId, result, manifest);
       })
-      .catch((error) => this.fail(repairId, error))
+      .catch(async (error) => {
+        if (activeSession.interrupted) {
+          return;
+        }
+        activeSession.lifecycle = "failed";
+        await this.settleQoderTurn(repairId, turn.turnId, "failed");
+        if (await this.startDemoFallback(repairId, "diagnosis")) {
+          return;
+        }
+        await this.fail(repairId, error);
+      })
       .finally(async () => {
         await handle.close().catch(() => undefined);
         if (this.activeQoder.get(repairId)?.handle === handle) {
@@ -712,14 +1428,65 @@ export class RepairService {
     void settled;
   }
 
-  public diagnose(repairId: string): Promise<RepairSession> {
-    return this.withTransition(repairId, ["diagnosing"], async (session) => {
-      if (this.activeQoder.has(repairId)) {
-        return session;
+  public async diagnose(
+    repairId: string,
+    idempotencyKey?: string,
+  ): Promise<RepairSession> {
+    return this.enqueueQoderCommand(repairId, () =>
+      this.diagnoseQoder(repairId, idempotencyKey),
+    );
+  }
+
+  private async diagnoseQoder(
+    repairId: string,
+    idempotencyKey?: string,
+  ): Promise<RepairSession> {
+    const current = await this.get(repairId);
+    const matching = this.matchingQoderTurn(
+      current,
+      "diagnose",
+      idempotencyKey,
+    );
+    if (matching !== undefined) {
+      if (!matching.latest) {
+        return current;
       }
-      await this.launchDiagnosis(repairId);
-      return session;
-    });
+      const matchedTurn = matching.turn;
+      if (
+        !this.activeQoder.has(repairId) &&
+        (matchedTurn.status !== "completed" ||
+          current.state === "diagnosing") &&
+        (await this.inspectPersistedQoderTurn(repairId, matchedTurn))
+      ) {
+        return this.get(repairId);
+      }
+      if (
+        matchedTurn.status !== "completed" &&
+        current.state === "diagnosing" &&
+        !this.activeQoder.has(repairId)
+      ) {
+        await this.launchDiagnosis(repairId, "diagnose", idempotencyKey);
+        return this.get(repairId);
+      }
+      return current;
+    }
+    return this.withTransition(
+      repairId,
+      ["diagnosing"],
+      async (session) => {
+        if (this.activeQoder.has(repairId)) {
+          return session;
+        }
+        await this.launchDiagnosis(repairId, "diagnose", idempotencyKey);
+        return this.get(repairId);
+      },
+      {
+        command: "diagnose",
+        duplicate: () => this.get(repairId),
+        key: idempotencyKey,
+        resourceId: repairId,
+      },
+    );
   }
 
   private async createCheckpoint(repairId: string): Promise<Checkpoint> {
@@ -753,7 +1520,11 @@ export class RepairService {
     return checkpoint;
   }
 
-  private async launchRepair(repairId: string): Promise<void> {
+  private async launchRepair(
+    repairId: string,
+    command: "start" | "resume",
+    idempotencyKey?: string,
+  ): Promise<void> {
     const privateRecord = await this.readPrivate(repairId);
     if (privateRecord.workspace === undefined) {
       throw new RepairStateError("editing", "Repair workspace is missing.");
@@ -761,65 +1532,150 @@ export class RepairService {
     const manifest = await this.manifest(repairId);
     const plan = await this.plan(repairId);
     if (plan === undefined) {
-      throw new RepairStateError("editing", "The approved repair plan is missing.");
+      throw new RepairStateError(
+        "editing",
+        "The approved repair plan is missing.",
+      );
     }
-    await this.createCheckpoint(repairId);
-    const handle = await startRepairSession({
-      adapter: this.config.qoderAdapter ?? new OfficialQoderAdapter(),
+    let existing = await this.get(repairId);
+    if (existing.latestCheckpointId === undefined) {
+      await this.createCheckpoint(repairId);
+      existing = await this.get(repairId);
+    }
+    const policy = qoderTurnPolicy({
       approvedPlan: plan.text,
-      artifactRoot: privateRecord.workspace.artifactRoot,
-      emit: (event) => this.runnerEvent(repairId, event),
       manifest,
       mode: "repair",
-      qoderSessionId: (await this.get(repairId)).qoderSessionId,
-      recordApproval: (request) => this.recordApproval(repairId, request),
-      repairSessionId: repairId,
-      requestApproval: (request) => this.waitForApproval(request),
-      worktreePath: privateRecord.workspace.worktreePath,
     });
+    const turn = await this.beginQoderTurn(
+      repairId,
+      "repair",
+      policy,
+      command,
+      idempotencyKey,
+    );
+    const abortController = new AbortController();
+    const signal = AbortSignal.any([
+      abortController.signal,
+      this.shutdownController.signal,
+    ]);
+    let handle: RepairSessionHandle;
+    try {
+      handle = await startRepairSession({
+        adapter: this.qoderAdapter(),
+        approvedPlan: plan.text,
+        artifactRoot: privateRecord.workspace.artifactRoot,
+        continuation:
+          existing.qoderTurns?.some(
+            (candidate) => candidate.mode === "repair",
+          ) ?? false,
+        emit: (event) => this.runnerEvent(repairId, event),
+        manifest,
+        maxTurns: policy.maxTurns,
+        mode: "repair",
+        model: policy.model,
+        qoderSessionId: turn.qoderSessionId,
+        recordApproval: (request) => this.recordApproval(repairId, request),
+        repairSessionId: repairId,
+        requestApproval: (request) =>
+          this.waitForApproval(repairId, request, signal),
+        resume: turn.resumed,
+        signal,
+        userMessageId: turn.userMessageId,
+        worktreePath: privateRecord.workspace.worktreePath,
+      });
+    } catch (error) {
+      await this.settleQoderTurn(repairId, turn.turnId, "failed");
+      throw error;
+    }
     const activeSession: ActiveQoderSession = {
+      abortController,
       handle,
+      interrupted: false,
+      lifecycle: "running",
       mode: "repair",
+      turnId: turn.turnId,
       turnCompleted: false,
     };
     this.activeQoder.set(repairId, activeSession);
     const settled = handle.turn
       .then(async (result) => {
-        await this.updateSession(repairId, (session) =>
-          RepairSessionSchema.parse({
-            ...session,
-            qoderSessionId: result.qoderSessionId,
-            updatedAt: timestamp(),
-          }),
-        );
-        const diff = await this.diff(repairId);
-        activeSession.turnCompleted = true;
-        for (const path of diff.changedFiles) {
-          await this.appendEvent(repairId, "file.changed", { path });
+        if (activeSession.lifecycle !== "running") {
+          return;
         }
-        await this.appendEvent(repairId, "diff.updated", {
-          changedFiles: diff.changedFiles,
-          stat: diff.stat,
-        });
+        activeSession.lifecycle = "completed";
+        activeSession.turnCompleted = true;
+        await this.finishRepairTurn(repairId, turn.turnId, result);
       })
-      .catch((error) => this.fail(repairId, error));
+      .catch(async (error) => {
+        if (activeSession.interrupted) {
+          return;
+        }
+        activeSession.lifecycle = "failed";
+        await this.settleQoderTurn(repairId, turn.turnId, "failed");
+        if (await this.recoverDemoRepair(repairId)) {
+          return;
+        }
+        await this.fail(repairId, error);
+      });
     activeSession.settled = settled;
     void settled;
   }
 
-  public startRepair(
+  public async startRepair(
     repairId: string,
     idempotencyKey?: string,
   ): Promise<RepairSession> {
+    return this.enqueueQoderCommand(repairId, () =>
+      this.startRepairQoder(repairId, idempotencyKey),
+    );
+  }
+
+  private async startRepairQoder(
+    repairId: string,
+    idempotencyKey?: string,
+  ): Promise<RepairSession> {
+    const current = await this.get(repairId);
+    const matching = this.matchingQoderTurn(current, "start", idempotencyKey);
+    if (matching !== undefined) {
+      if (!matching.latest) {
+        return current;
+      }
+      const matchedTurn = matching.turn;
+      if (
+        matchedTurn.status !== "completed" &&
+        !this.activeQoder.has(repairId) &&
+        (await this.inspectPersistedQoderTurn(repairId, matchedTurn))
+      ) {
+        return this.get(repairId);
+      }
+      if (
+        matchedTurn.status !== "completed" &&
+        current.state === "editing" &&
+        !this.activeQoder.has(repairId)
+      ) {
+        await this.launchRepair(repairId, "start", idempotencyKey);
+        return this.get(repairId);
+      }
+      return current;
+    }
     return this.withTransition(
       repairId,
       ["editing"],
       async (session) => {
-        if (this.activeQoder.has(repairId)) {
+        const active = this.activeQoder.get(repairId);
+        if (active !== undefined && !active.turnCompleted) {
           return session;
         }
-        await this.launchRepair(repairId);
-        return session;
+        if (active !== undefined) {
+          await active.handle.close().catch(() => undefined);
+          await active.handle.closed.catch(() => undefined);
+          if (this.activeQoder.get(repairId)?.handle === active.handle) {
+            this.activeQoder.delete(repairId);
+          }
+        }
+        await this.launchRepair(repairId, "start", idempotencyKey);
+        return this.get(repairId);
       },
       {
         command: "start",
@@ -867,10 +1723,7 @@ export class RepairService {
       }
       throw new RepairApprovalError("Approval request is no longer pending.");
     }
-    if (
-      record.request.kind === "patch" &&
-      decision.decision !== "deny"
-    ) {
+    if (record.request.kind === "patch" && decision.decision !== "deny") {
       const verification = (await fileExists(layout.verificationPath))
         ? await readJson<{ diffHash: string }>(layout.verificationPath)
         : undefined;
@@ -961,9 +1814,7 @@ export class RepairService {
       }
       await this.appendEvent(
         repairId,
-        decision.decision === "deny"
-          ? "session.failed"
-          : "session.completed",
+        decision.decision === "deny" ? "session.failed" : "session.completed",
         {
           state: decision.decision === "deny" ? "rejected" : "completed",
         },
@@ -995,6 +1846,17 @@ export class RepairService {
     };
   }
 
+  public async worktreePath(repairId: string): Promise<string> {
+    const privateRecord = await this.readPrivate(repairId);
+    if (privateRecord.workspace === undefined) {
+      throw new RepairStateError(
+        (await this.get(repairId)).state,
+        "Repair workspace is not prepared.",
+      );
+    }
+    return privateRecord.workspace.worktreePath;
+  }
+
   private async waitForActiveRepairTurn(repairId: string): Promise<void> {
     const active = this.activeQoder.get(repairId);
     if (
@@ -1006,8 +1868,7 @@ export class RepairService {
     }
     const pendingToolApproval = (await this.approvals(repairId)).some(
       (record) =>
-        record.request.kind === "tool" &&
-        record.request.state === "pending",
+        record.request.kind === "tool" && record.request.state === "pending",
     );
     if (pendingToolApproval) {
       return;
@@ -1025,160 +1886,170 @@ export class RepairService {
     idempotencyKey?: string,
   ): Promise<RepairSession> {
     await this.waitForActiveRepairTurn(repairId);
-    return this.withTransition(repairId, ["editing"], async (session) => {
-      const active = this.activeQoder.get(repairId);
-      const pendingToolApproval = (await this.approvals(repairId)).some(
-        (record) =>
-          record.request.kind === "tool" &&
-          record.request.state === "pending",
-      );
-      if (
-        active?.mode === "repair" &&
-        (!active.turnCompleted || pendingToolApproval)
-      ) {
-        throw new RepairStateError(
-          session.state,
-          "The active Qoder turn must finish before verification.",
+    return this.withTransition(
+      repairId,
+      ["editing"],
+      async (session) => {
+        const active = this.activeQoder.get(repairId);
+        const pendingToolApproval = (await this.approvals(repairId)).some(
+          (record) =>
+            record.request.kind === "tool" &&
+            record.request.state === "pending",
         );
-      }
-      const privateRecord = await this.readPrivate(repairId);
-      if (privateRecord.workspace === undefined) {
-        throw new RepairStateError(session.state, "Repair workspace is missing.");
-      }
-      const manifest = await this.manifest(repairId);
-      if (manifest.verification.commands.length === 0) {
-        throw new RepairStateError(
-          session.state,
-          "At least one configured verification command is required.",
-        );
-      }
-      const verificationController = new AbortController();
-      this.activeVerifications.set(repairId, verificationController);
-      const supervisor =
-        this.config.commandRunner === undefined
-          ? await createProcessSupervisor({
-              worktreePath: privateRecord.workspace.worktreePath,
-              commands: manifest.verification.commands,
-            })
-          : undefined;
-      const runner: RepairCommandRunner =
-        this.config.commandRunner ??
-        (async (command, _worktreePath, signal) => {
-          const result = await supervisor!.run(command, { signal });
-          return {
-            state:
-              result.terminationReason === "timeout"
-                ? "timed-out"
-                : result.terminationReason === "cancelled"
-                  ? "cancelled"
-                  : result.exitCode === 0
-                    ? "passed"
-                    : "failed",
-            ...(result.exitCode === null
-              ? {}
-              : { exitCode: result.exitCode }),
-            durationMs: result.durationMs,
-            output: `${result.stdout}${result.stderr}`,
-          };
-        });
-      const layout = await this.existingLayout(repairId);
-      await this.writeSession(layout, {
-        ...session,
-        state: "verifying",
-        updatedAt: timestamp(),
-      });
-      await this.appendEvent(repairId, "verification.started", {});
-      try {
-        const results: TestResult[] = [];
-        for (const command of manifest.verification.commands) {
-          if (verificationController.signal.aborted) {
-            break;
-          }
-          await this.appendEvent(repairId, "test.started", {
-            commandId: command.id,
-            label: command.label,
-          });
-          const result = await runner(
-            command,
-            privateRecord.workspace.worktreePath,
-            verificationController.signal,
+        if (
+          active?.mode === "repair" &&
+          (!active.turnCompleted || pendingToolApproval)
+        ) {
+          throw new RepairStateError(
+            session.state,
+            "The active Qoder turn must finish before verification.",
           );
-          const test = TestResultSchema.parse({
-            commandId: command.id,
-            state: result.state,
-            ...(result.exitCode === undefined
-              ? {}
-              : { exitCode: result.exitCode }),
-            durationMs: result.durationMs,
-            outputArtifactId: `test-output-${command.id}`,
-          });
-          results.push(test);
-          await this.appendEvent(repairId, "test.output", {
-            commandId: command.id,
-            output: redactText(result.output),
-          });
-          await this.appendEvent(repairId, "test.completed", test);
         }
-        await this.writeJson(layout, layout.testsPath, results);
-        const currentSession = await this.get(repairId);
-        if (currentSession.state === "cancelled") {
-          await this.appendEvent(repairId, "verification.completed", {
-            passed: false,
-            testCount: results.length,
-          });
-          return currentSession;
+        const privateRecord = await this.readPrivate(repairId);
+        if (privateRecord.workspace === undefined) {
+          throw new RepairStateError(
+            session.state,
+            "Repair workspace is missing.",
+          );
         }
-        const verifiedDiff = await this.diff(repairId);
-        const passed =
-          results.length === manifest.verification.commands.length &&
-          results.every((result) => result.state === "passed");
-        if (!passed) {
-          await rm(layout.verificationPath, { force: true });
-          await rm(layout.comparisonPath, { force: true });
-          const updated = await this.writeSession(layout, {
-            ...session,
-            state: "editing",
-            updatedAt: timestamp(),
-          });
-          await this.appendEvent(repairId, "verification.completed", {
-            passed: false,
-            testCount: results.length,
-          });
-          return updated;
+        const manifest = await this.manifest(repairId);
+        if (manifest.verification.commands.length === 0) {
+          throw new RepairStateError(
+            session.state,
+            "At least one configured verification command is required.",
+          );
         }
-        await this.writeJson(layout, layout.verificationPath, {
-          diffHash: diffHash(verifiedDiff),
+        const verificationController = new AbortController();
+        this.activeVerifications.set(repairId, verificationController);
+        const supervisor =
+          this.config.commandRunner === undefined
+            ? await createProcessSupervisor({
+                worktreePath: privateRecord.workspace.worktreePath,
+                commands: manifest.verification.commands,
+              })
+            : undefined;
+        const runner: RepairCommandRunner =
+          this.config.commandRunner ??
+          (async (command, _worktreePath, signal) => {
+            const result = await supervisor!.run(command, { signal });
+            return {
+              state:
+                result.terminationReason === "timeout"
+                  ? "timed-out"
+                  : result.terminationReason === "cancelled"
+                    ? "cancelled"
+                    : result.exitCode === 0
+                      ? "passed"
+                      : "failed",
+              ...(result.exitCode === null
+                ? {}
+                : { exitCode: result.exitCode }),
+              durationMs: result.durationMs,
+              output: `${result.stdout}${result.stderr}`,
+            };
+          });
+        const layout = await this.existingLayout(repairId);
+        await this.writeSession(layout, {
+          ...session,
+          state: "verifying",
+          updatedAt: timestamp(),
         });
-        await rm(layout.comparisonPath, { force: true });
-        return this.completeVerification(
-          repairId,
-          session,
-          layout,
-          {
-            repository: privateRecord.repository,
-            workspace: privateRecord.workspace,
-          },
-          manifest,
-          results,
-          verifiedDiff,
-        );
-      } catch (error) {
-        await this.stopPreview(repairId);
-        if ((await this.get(repairId)).state !== "cancelled") {
-          await this.fail(repairId, error);
+        await this.appendEvent(repairId, "verification.started", {});
+        try {
+          const results: TestResult[] = [];
+          for (const command of manifest.verification.commands) {
+            if (verificationController.signal.aborted) {
+              break;
+            }
+            await this.appendEvent(repairId, "test.started", {
+              commandId: command.id,
+              label: command.label,
+            });
+            const result = await runner(
+              command,
+              privateRecord.workspace.worktreePath,
+              verificationController.signal,
+            );
+            const test = TestResultSchema.parse({
+              commandId: command.id,
+              state: result.state,
+              ...(result.exitCode === undefined
+                ? {}
+                : { exitCode: result.exitCode }),
+              durationMs: result.durationMs,
+              outputArtifactId: `test-output-${command.id}`,
+            });
+            results.push(test);
+            await this.appendEvent(repairId, "test.output", {
+              commandId: command.id,
+              output: redactText(result.output),
+            });
+            await this.appendEvent(repairId, "test.completed", test);
+          }
+          await this.writeJson(layout, layout.testsPath, results);
+          const currentSession = await this.get(repairId);
+          if (currentSession.state === "cancelled") {
+            await this.appendEvent(repairId, "verification.completed", {
+              passed: false,
+              testCount: results.length,
+            });
+            return currentSession;
+          }
+          const verifiedDiff = await this.diff(repairId);
+          const passed =
+            results.length === manifest.verification.commands.length &&
+            results.every((result) => result.state === "passed");
+          if (!passed) {
+            await rm(layout.verificationPath, { force: true });
+            await rm(layout.comparisonPath, { force: true });
+            const updated = await this.writeSession(layout, {
+              ...session,
+              state: "editing",
+              updatedAt: timestamp(),
+            });
+            await this.appendEvent(repairId, "verification.completed", {
+              passed: false,
+              testCount: results.length,
+            });
+            return updated;
+          }
+          await this.writeJson(layout, layout.verificationPath, {
+            diffHash: diffHash(verifiedDiff),
+          });
+          await rm(layout.comparisonPath, { force: true });
+          return this.completeVerification(
+            repairId,
+            session,
+            layout,
+            {
+              repository: privateRecord.repository,
+              workspace: privateRecord.workspace,
+            },
+            manifest,
+            results,
+            verifiedDiff,
+          );
+        } catch (error) {
+          await this.stopPreview(repairId);
+          if ((await this.get(repairId)).state !== "cancelled") {
+            await this.fail(repairId, error);
+          }
+          throw error;
+        } finally {
+          if (
+            this.activeVerifications.get(repairId) === verificationController
+          ) {
+            this.activeVerifications.delete(repairId);
+          }
         }
-        throw error;
-      } finally {
-        if (this.activeVerifications.get(repairId) === verificationController) {
-          this.activeVerifications.delete(repairId);
-        }
-      }
-    }, {
-      command: "verify",
-      duplicate: () => this.get(repairId),
-      key: idempotencyKey,
-      resourceId: repairId,
-    });
+      },
+      {
+        command: "verify",
+        duplicate: () => this.get(repairId),
+        key: idempotencyKey,
+        resourceId: repairId,
+      },
+    );
   }
 
   private async stopPreview(repairId: string): Promise<void> {
@@ -1201,9 +2072,7 @@ export class RepairService {
       return existing;
     }
     const preview = new URL(repository.previewUrl);
-    const port =
-      preview.port ||
-      (preview.protocol === "https:" ? "443" : "80");
+    const port = preview.port || (preview.protocol === "https:" ? "443" : "80");
     const supervisor = await createProcessSupervisor({
       worktreePath: workspace.worktreePath,
       commands: [repository.startCommand],
@@ -1264,6 +2133,111 @@ export class RepairService {
       : undefined;
   }
 
+  public async completeSandboxVerification(
+    repairId: string,
+    input: SandboxVerificationInput,
+    idempotencyKey?: string,
+  ): Promise<RepairSession> {
+    await this.waitForActiveRepairTurn(repairId);
+    return this.withTransition(
+      repairId,
+      ["editing"],
+      async (session) => {
+        const active = this.activeQoder.get(repairId);
+        const pendingToolApproval = (await this.approvals(repairId)).some(
+          (record) =>
+            record.request.kind === "tool" &&
+            record.request.state === "pending",
+        );
+        if (
+          active?.mode === "repair" &&
+          (!active.turnCompleted || pendingToolApproval)
+        ) {
+          throw new RepairStateError(
+            session.state,
+            "The active Qoder turn must finish before verification.",
+          );
+        }
+        const manifest = await this.manifest(repairId);
+        const layout = await this.existingLayout(repairId);
+        const verifiedDiff = await this.diff(repairId);
+        const tests = input.results.map((result) =>
+          TestResultSchema.parse({
+            commandId: result.commandId,
+            state: result.state,
+            ...(result.exitCode === undefined
+              ? {}
+              : { exitCode: result.exitCode }),
+            durationMs: result.durationMs,
+            outputArtifactId: `sandbox-output-${result.commandId}`,
+          }),
+        );
+        const commandIds = new Set(tests.map((result) => result.commandId));
+        const requiredCommandsPresent = manifest.verification.commands.every(
+          (command) => commandIds.has(command.id),
+        );
+        const selectedFindingsResolved = manifest.findingIds.every(
+          (findingId) =>
+            input.comparison.find((entry) => entry.findingId === findingId)
+              ?.afterState === "resolved",
+        );
+        const noRegressions = input.comparison.every(
+          (entry) => entry.afterState !== "regressed",
+        );
+        const passed =
+          verifiedDiff.changedFiles.length > 0 &&
+          requiredCommandsPresent &&
+          tests.every((result) => result.state === "passed") &&
+          input.replayPassed &&
+          noRegressions &&
+          selectedFindingsResolved;
+        const comparison = input.comparison;
+        const run = VerificationRunSchema.parse({
+          id: `verification-${repairId}`,
+          repairSessionId: repairId,
+          startedAt: timestamp(),
+          completedAt: timestamp(),
+          previewUrl: input.previewUrl,
+          tests,
+          comparison,
+        });
+        await this.writeJson(layout, layout.testsPath, tests);
+        await this.writeJson(layout, layout.verificationPath, {
+          diffHash: diffHash(verifiedDiff),
+        });
+        await this.writeJson(layout, layout.comparisonPath, run);
+        const updated = await this.writeSession(layout, {
+          ...session,
+          state: passed ? "awaiting-patch-approval" : "editing",
+          updatedAt: timestamp(),
+        });
+        await this.appendEvent(repairId, "verification.completed", {
+          comparison,
+          kind: "sandbox-task-replay",
+          passed,
+          testCount: tests.length,
+        });
+        if (passed) {
+          await this.createApproval(repairId, {
+            kind: "patch",
+            title: "Approve the repair patch",
+            consequence:
+              "Accepts the displayed worktree diff after Docker-isolated checks and browser replay.",
+            risk: "write",
+            targetPaths: verifiedDiff.changedFiles,
+          });
+        }
+        return updated;
+      },
+      {
+        command: "verify",
+        duplicate: () => this.get(repairId),
+        key: idempotencyKey,
+        resourceId: repairId,
+      },
+    );
+  }
+
   private async completeVerification(
     repairId: string,
     session: RepairSession,
@@ -1293,8 +2267,7 @@ export class RepairService {
       manifest.verification.taskContract,
       preview.url,
     );
-    const auditRunner =
-      this.config.replayAuditRunner ?? runPersistedAudit;
+    const auditRunner = this.config.replayAuditRunner ?? runPersistedAudit;
     const after = await auditRunner(replayTask, {
       artifactRoot: layout.root,
       editableRepositoryRoot: this.config.editableRepositoryRoot,
@@ -1323,11 +2296,11 @@ export class RepairService {
       diffHash(verifiedDiff) === diffHash(await this.diff(repairId));
     const selectedResolved = manifest.findingIds.every(
       (findingId) =>
-        comparison.find((item) => item.findingId === findingId)
-          ?.afterState === "resolved",
+        comparison.find((item) => item.findingId === findingId)?.afterState ===
+        "resolved",
     );
     const passed =
-      after.bundle.outcome === "passed" &&
+      replayOutcomeSupportsFindingVerification(after.bundle.outcome) &&
       patchStillMatches &&
       selectedResolved;
     const updated = await this.writeSession(layout, {
@@ -1404,9 +2377,12 @@ export class RepairService {
         "The active repair checkpoint is unavailable.",
       );
     }
-    const rewind = await active.handle.rewindFiles({ dryRun: true });
+    const rewind = await this.rewindQoderFiles(repairId, active, true);
     if (!rewind.canRewind) {
-      throw new RepairStateError(session.state, "No file changes can be rewound.");
+      throw new RepairStateError(
+        session.state,
+        "No file changes can be rewound.",
+      );
     }
     const tests = await this.tests(repairId);
     const preview = RewindPreviewSchema.parse({
@@ -1462,16 +2438,12 @@ export class RepairService {
       return idempotency.duplicate();
     }
     const records = await this.approvals(repairId);
-    const approval = records.find(
-      (record) => record.request.id === approvalId,
-    );
+    const approval = records.find((record) => record.request.id === approvalId);
     if (
       approval?.request.kind !== "rewind" ||
       approval.request.state !== "approved"
     ) {
-      throw new RepairApprovalError(
-        "An approved rewind request is required.",
-      );
+      throw new RepairApprovalError("An approved rewind request is required.");
     }
     const active = this.activeQoder.get(repairId);
     if (active?.mode !== "repair") {
@@ -1481,7 +2453,7 @@ export class RepairService {
       );
     }
     await this.stopPreview(repairId);
-    const result = await active.handle.rewindFiles();
+    const result = await this.rewindQoderFiles(repairId, active, false);
     const staleVerificationIds = (await this.tests(repairId)).map(
       (test) => `verification-${test.commandId}`,
     );
@@ -1546,12 +2518,90 @@ export class RepairService {
     };
   }
 
-  public async interrupt(repairId: string): Promise<RepairSession> {
+  private async rewindQoderFiles(
+    repairId: string,
+    active: ActiveQoderSession,
+    dryRun: boolean,
+  ): Promise<{
+    canRewind: boolean;
+    filesChanged: string[];
+    insertions: number;
+    deletions: number;
+  }> {
+    const session = await this.get(repairId);
+    const messageIds = [
+      ...new Set(
+        (session.qoderTurns ?? [])
+          .filter(
+            (turn) =>
+              turn.mode === "repair" &&
+              (turn.status === "completed" ||
+                turn.status === "interrupted" ||
+                turn.status === "failed"),
+          )
+          .map((turn) => turn.userMessageId)
+          .reverse(),
+      ),
+    ];
+    if (messageIds.length === 0) {
+      const result = await active.handle.rewindFiles({ dryRun });
+      return {
+        canRewind: result.canRewind,
+        filesChanged: result.filesChanged ?? [],
+        insertions: result.insertions ?? 0,
+        deletions: result.deletions ?? 0,
+      };
+    }
+    const files = new Set<string>();
+    let insertions = 0;
+    let deletions = 0;
+    for (const userMessageId of messageIds) {
+      const result = await active.handle.rewindFiles({
+        dryRun,
+        userMessageId,
+      });
+      for (const path of result.filesChanged ?? []) {
+        files.add(path);
+      }
+      insertions += result.insertions ?? 0;
+      deletions += result.deletions ?? 0;
+    }
+    return {
+      canRewind: files.size > 0,
+      filesChanged: [...files].sort(),
+      insertions,
+      deletions,
+    };
+  }
+
+  public async interrupt(
+    repairId: string,
+    idempotencyKey?: string,
+  ): Promise<RepairSession> {
+    const layout = await this.existingLayout(repairId);
+    const idempotency: IdempotencyOptions<RepairSession> = {
+      command: "pause",
+      duplicate: () => this.get(repairId),
+      key: idempotencyKey,
+      resourceId: repairId,
+    };
+    if (await this.isDuplicate(layout, idempotency)) {
+      return idempotency.duplicate();
+    }
     const active = this.activeQoder.get(repairId);
     const session = await this.get(repairId);
     if (active === undefined) {
+      await this.recordReceipt(layout, idempotency);
       return session;
     }
+    if (active.lifecycle !== "running") {
+      await this.recordReceipt(layout, idempotency);
+      return session;
+    }
+    active.lifecycle = "interrupted";
+    active.interrupted = true;
+    active.abortController.abort();
+    await this.settleQoderTurn(repairId, active.turnId, "interrupted");
     await active.handle.interrupt();
     await this.expireApprovals(
       repairId,
@@ -1573,24 +2623,81 @@ export class RepairService {
       }),
     );
     await this.appendEvent(repairId, "phase.changed", { state: "paused" });
+    await this.recordReceipt(layout, idempotency);
     return paused;
   }
 
-  public resume(repairId: string): Promise<RepairSession> {
-    return this.withTransition(repairId, ["paused"], async (_session) => {
-      const resumed = await this.updateSession(repairId, (current) =>
-        RepairSessionSchema.parse({
-          ...current,
-          state: "editing",
-          updatedAt: timestamp(),
-        }),
-      );
-      await this.appendEvent(repairId, "session.resumed", {});
-      if (!this.activeQoder.has(repairId)) {
-        await this.launchRepair(repairId);
+  public resume(
+    repairId: string,
+    idempotencyKey?: string,
+  ): Promise<RepairSession> {
+    return this.enqueueQoderCommand(repairId, () =>
+      this.resumeQoder(repairId, idempotencyKey),
+    );
+  }
+
+  private async resumeQoder(
+    repairId: string,
+    idempotencyKey?: string,
+  ): Promise<RepairSession> {
+    const current = await this.get(repairId);
+    const matching = this.matchingQoderTurn(current, "resume", idempotencyKey);
+    if (matching !== undefined) {
+      if (!matching.latest) {
+        return current;
       }
-      return resumed;
-    });
+      const matchedTurn = matching.turn;
+      if (
+        matchedTurn.status !== "completed" &&
+        !this.activeQoder.has(repairId) &&
+        (await this.inspectPersistedQoderTurn(repairId, matchedTurn))
+      ) {
+        return this.get(repairId);
+      }
+      if (
+        matchedTurn.status !== "completed" &&
+        (current.state === "diagnosing" || current.state === "editing") &&
+        !this.activeQoder.has(repairId)
+      ) {
+        if (current.state === "diagnosing") {
+          await this.launchDiagnosis(repairId, "resume", idempotencyKey);
+        } else {
+          await this.launchRepair(repairId, "resume", idempotencyKey);
+        }
+        return this.get(repairId);
+      }
+      return current;
+    }
+    return this.withTransition(
+      repairId,
+      ["paused"],
+      async () => {
+        const mode =
+          (await this.plan(repairId)) === undefined ? "diagnosis" : "repair";
+        await this.updateSession(repairId, (current) =>
+          RepairSessionSchema.parse({
+            ...current,
+            state: mode === "diagnosis" ? "diagnosing" : "editing",
+            updatedAt: timestamp(),
+          }),
+        );
+        await this.appendEvent(repairId, "session.resumed", { mode });
+        if (!this.activeQoder.has(repairId)) {
+          if (mode === "diagnosis") {
+            await this.launchDiagnosis(repairId, "resume", idempotencyKey);
+          } else {
+            await this.launchRepair(repairId, "resume", idempotencyKey);
+          }
+        }
+        return this.get(repairId);
+      },
+      {
+        command: "resume",
+        duplicate: () => this.get(repairId),
+        key: idempotencyKey,
+        resourceId: repairId,
+      },
+    );
   }
 
   public async cancel(
@@ -1623,6 +2730,10 @@ export class RepairService {
     await this.stopPreview(repairId);
     const active = this.activeQoder.get(repairId);
     if (active !== undefined) {
+      active.lifecycle = "interrupted";
+      active.interrupted = true;
+      active.abortController.abort();
+      await this.settleQoderTurn(repairId, active.turnId, "interrupted");
       await active.handle.interrupt().catch(() => undefined);
       await active.handle.close().catch(() => undefined);
       await active.handle.closed.catch(() => undefined);
@@ -1646,7 +2757,9 @@ export class RepairService {
       return [];
     }
     return (await readdir(repairsRoot, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory() && entry.name.startsWith("repair-"))
+      .filter(
+        (entry) => entry.isDirectory() && entry.name.startsWith("repair-"),
+      )
       .map((entry) => entry.name);
   }
 
@@ -1708,31 +2821,50 @@ export class RepairService {
   }
 
   public async shutdown(): Promise<void> {
+    this.shuttingDown = true;
+    this.shutdownController.abort();
     for (const verification of this.activeVerifications.values()) {
       verification.abort();
     }
     this.activeVerifications.clear();
-    const previews = [...this.activePreviews.keys()];
-    await Promise.all(previews.map((repairId) => this.stopPreview(repairId)));
+    const previews = [...this.activePreviews.entries()];
+    this.activePreviews.clear();
     const active = [...this.activeQoder.entries()];
     this.activeQoder.clear();
-    await Promise.all(
-      active.map(async ([repairId, session]) => {
-        await session.handle.interrupt().catch(() => undefined);
-        await session.handle.close().catch(() => undefined);
-        await session.settled?.catch(() => undefined);
-        for (const record of await this.approvals(repairId).catch(() => [])) {
-          const pending = this.pendingApprovals.get(record.request.id);
-          if (pending !== undefined) {
-            pending.resolve({
-              decision: "deny",
-              reason: "Companion shutdown.",
-            });
-            this.pendingApprovals.delete(record.request.id);
-          }
-        }
+    await Promise.all([
+      ...previews.map(async ([, preview]) => {
+        await Promise.all([
+          waitAtMost(
+            Promise.resolve().then(() => preview.process.cancel()),
+            SHUTDOWN_OPERATION_TIMEOUT_MS,
+          ),
+          waitAtMost(preview.process.result, SHUTDOWN_OPERATION_TIMEOUT_MS),
+        ]);
       }),
-    );
+      ...active.map(async ([repairId, session]) => {
+        session.lifecycle = "interrupted";
+        session.interrupted = true;
+        session.abortController.abort();
+        await Promise.all([
+          waitAtMost(
+            this.settleQoderTurn(repairId, session.turnId, "interrupted"),
+            SHUTDOWN_OPERATION_TIMEOUT_MS,
+          ),
+          waitAtMost(
+            this.expireApprovals(repairId, () => true, "Companion shutdown."),
+            SHUTDOWN_OPERATION_TIMEOUT_MS,
+          ),
+          waitAtMost(
+            Promise.resolve().then(() => session.handle.interrupt()),
+            SHUTDOWN_OPERATION_TIMEOUT_MS,
+          ),
+          waitAtMost(
+            Promise.resolve().then(() => session.handle.close()),
+            SHUTDOWN_OPERATION_TIMEOUT_MS,
+          ),
+        ]);
+      }),
+    ]);
   }
 
   public async replay(
@@ -1902,6 +3034,7 @@ ${[...(report.beforeAudit?.limitations ?? []), ...(report.afterAudit?.limitation
     await this.appendEvent(repairId, "session.failed", {
       message,
     }).catch(() => undefined);
+    this.config.onAgentFailure?.(repairId, message);
   }
 }
 

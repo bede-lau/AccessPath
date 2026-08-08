@@ -24,7 +24,7 @@ describe("demo-aid-app server", () => {
     return `http://127.0.0.1:${port}`;
   }
 
-  it("serves the complete fictional emergency-aid application", async () => {
+  it("serves the complete emergency-aid application", async () => {
     server = await start(0);
     const response = await fetch(`${baseUrl(server)}/`);
 
@@ -38,9 +38,9 @@ describe("demo-aid-app server", () => {
     expect(html).toContain("Check eligibility");
     expect(html).toContain("Create applicant profile");
     expect(html).toContain("Enter assistance details");
-    expect(html).toContain("Review your test application");
-    expect(html).toContain("Test application submitted");
-    expect(html).toContain("Demonstration only.");
+    expect(html).toContain("Review your application");
+    expect(html).toContain("Application submitted");
+    expect(html).not.toContain("Demonstration only.");
   });
 
   it("serves JavaScript and CSS assets with stable content types", async () => {
@@ -74,20 +74,23 @@ describe("demo-aid-app server", () => {
     });
   });
 
-  it("exposes the seeded task contract and expected finding manifest", async () => {
+  it("exposes the task contract and expected finding manifest", async () => {
     server = await start(0);
-    const [taskResponse, findingsResponse] = await Promise.all([
+    const [taskResponse, publishedTaskResponse, findingsResponse] = await Promise.all([
       fetch(`${baseUrl(server)}/fixture/task-contract.json`),
+      fetch(`${baseUrl(server)}/.well-known/accesspath-task.json`),
       fetch(`${baseUrl(server)}/fixture/expected-findings.json`),
     ]);
 
     expect(taskResponse.status).toBe(200);
     expect(await taskResponse.json()).toEqual(fixtureTaskContract);
+    expect(publishedTaskResponse.status).toBe(200);
+    expect(await publishedTaskResponse.json()).toEqual(fixtureTaskContract);
     expect(findingsResponse.status).toBe(200);
     expect(await findingsResponse.json()).toEqual(expectedFindingManifest);
   });
 
-  it("stores fictional submissions in memory and resets deterministically", async () => {
+  it("stores submissions in memory and resets deterministically", async () => {
     server = await start(0);
     const url = baseUrl(server);
     const submission = {
@@ -95,7 +98,7 @@ describe("demo-aid-app server", () => {
       fullName: "Jordan Example",
       phone: "202-555-0148",
       assistanceTypes: ["housing"],
-      fictionalDataConfirmed: true,
+      applicationAccuracyConfirmed: true,
     };
 
     const firstResponse = await fetch(`${url}/api/test-submissions`, {
@@ -110,14 +113,14 @@ describe("demo-aid-app server", () => {
     });
 
     expect(firstResponse.status).toBe(201);
-    expect(await firstResponse.json()).toMatchObject({ reference: "TEST-0001" });
-    expect(await secondResponse.json()).toMatchObject({ reference: "TEST-0002" });
+    expect(await firstResponse.json()).toMatchObject({ reference: "APP-0001" });
+    expect(await secondResponse.json()).toMatchObject({ reference: "APP-0002" });
 
     const populatedState = await fetch(`${url}/__fixture/state`).then((response) =>
       response.json(),
     );
     expect(populatedState.submissions).toHaveLength(2);
-    expect(populatedState.nextReference).toBe("TEST-0003");
+    expect(populatedState.nextReference).toBe("APP-0003");
 
     const resetResponse = await fetch(`${url}/__fixture/reset`, {
       method: "POST",
@@ -128,12 +131,12 @@ describe("demo-aid-app server", () => {
       state: {
         fixtureId: FIXTURE_ID,
         submissions: [],
-        nextReference: "TEST-0001",
+        nextReference: "APP-0001",
       },
     });
   });
 
-  it("rejects malformed or non-fictional submission input", async () => {
+  it("rejects malformed or unconfirmed submission input", async () => {
     server = await start(0);
     const response = await fetch(`${baseUrl(server)}/api/test-submissions`, {
       method: "POST",
@@ -143,7 +146,7 @@ describe("demo-aid-app server", () => {
         fullName: "Jordan Example",
         phone: "202-555-0148",
         assistanceTypes: ["housing"],
-        fictionalDataConfirmed: false,
+        applicationAccuracyConfirmed: false,
       }),
     });
 

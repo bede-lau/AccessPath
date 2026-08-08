@@ -11,18 +11,18 @@ export const BARRIER_IDS = [
 export const fixtureTaskContract = {
   schemaVersion: "1.0.0",
   id: "task-emergency-aid-application",
-  title: "Apply for fictional emergency assistance",
+  title: "Apply for emergency assistance",
   goal:
-    "Check eligibility, create an applicant profile, enter assistance details, review the application, and submit a test application.",
+    "Check eligibility, create an applicant profile, enter assistance details, review the application, and submit an application.",
   startUrl: "http://127.0.0.1:4173/",
   targetPolicy: "local-explicit",
   success: {
-    visibleText: "Test application submitted",
+    visibleText: "Application submitted",
     selector: "[data-testid='submission-confirmation']",
   },
   forbiddenActions: [
-    "Do not enter real personal information.",
-    "Do not submit information to a real agency.",
+    "Use only the preloaded applicant details.",
+    "Do not leave the reviewed application flow.",
     "Do not make payments or upload identity documents.",
   ],
   expectedSteps: [
@@ -44,13 +44,13 @@ export const fixtureTaskContract = {
     },
     {
       id: "profile-name",
-      intent: "Enter the fictional applicant name",
+      intent: "Enter the applicant name",
       action: { kind: "fill", label: "Full name", valueRef: "fullName" },
       checkpoint: false,
     },
     {
       id: "profile-phone",
-      intent: "Enter the fictional phone number",
+      intent: "Enter the phone number",
       action: { kind: "fill", label: "Phone number", valueRef: "phone" },
       checkpoint: true,
     },
@@ -78,38 +78,38 @@ export const fixtureTaskContract = {
     },
     {
       id: "review-invalid",
-      intent: "Attempt submission before accepting the test-data statement",
+      intent: "Attempt submission before confirming the application details",
       action: {
         kind: "click",
         role: "button",
-        name: "Submit test application",
+        name: "Submit application",
       },
       checkpoint: true,
     },
     {
       id: "review-attestation",
-      intent: "Confirm that all information is fictional",
+      intent: "Confirm that the application information is accurate",
       action: {
         kind: "click",
         role: "checkbox",
-        name: "I confirm this application contains fictional test information only",
+        name: "I confirm the information in this application is accurate",
       },
       checkpoint: false,
     },
     {
       id: "review-submit",
-      intent: "Submit the fictional test application",
+      intent: "Submit the application",
       action: {
         kind: "click",
         role: "button",
-        name: "Submit test application",
+        name: "Submit application",
       },
       checkpoint: true,
     },
     {
       id: "submission-confirmation",
-      intent: "Confirm that the test application was submitted",
-      action: { kind: "assert", text: "Test application submitted" },
+      intent: "Confirm that the application was submitted",
+      action: { kind: "assert", text: "Application submitted" },
       checkpoint: true,
     },
   ],
@@ -132,8 +132,8 @@ export const expectedFindingManifest = {
   findings: [
     {
       id: "AP-001",
-      title: "Eligibility choice cannot be selected with a keyboard",
-      affectedAction: "Choose an eligibility option with a keyboard",
+      title: "Keyboard users cannot choose an eligibility option",
+      affectedAction: "Choose an eligibility option",
       source: "task-runner",
       evidenceLabel: "observed",
       severity: "blocker",
@@ -144,26 +144,30 @@ export const expectedFindingManifest = {
       selector: "[data-barrier-id='AP-001']",
       wcagRefs: ["2.1.1", "4.1.2"],
       observation:
-        "The custom eligibility options respond to pointer clicks but expose no keyboard-operable control.",
+        "The choices worked with a mouse, but the keyboard could not reach or select either option.",
       diagnosis:
-        "The custom options are non-interactive div elements with pointer click handlers only.",
+        "The choices are non-interactive elements with click handlers, so the browser does not treat them as radio buttons.",
       reproduction: [
-        "Load the fixture and move focus through the eligibility step using Tab.",
-        "Attempt to select either eligibility option using Space or Enter.",
+        "Open the eligibility step.",
+        "Press Tab to move through the page, then try Space or Enter on either choice.",
       ],
       remediationGuidance:
-        "Use native radio inputs or add complete radio semantics and keyboard behavior.",
+        "Replace the custom choices with native radio buttons. If custom controls are required, add the full radio-button name, role, focus, and keyboard behavior.",
       evidenceIds: [],
       manualReview: [
-        "Confirm the repaired option can be selected with standard keyboard commands.",
+        "Use only the keyboard to confirm that each option can receive focus and be selected with the standard radio-button keys.",
       ],
-      expectedChecks: ["No radio role", "No tabindex", "No keyboard handler"],
+      expectedChecks: [
+        "No radio-button role",
+        "Not reachable with Tab",
+        "No Space or Enter behavior",
+      ],
       selectedDemoRepair: true,
     },
     {
       id: "AP-002",
-      title: "Phone field omits telephone autocomplete metadata",
-      affectedAction: "Enter a phone number efficiently",
+      title: "The phone field cannot use saved phone details",
+      affectedAction: "Enter a phone number",
       source: "task-runner",
       evidenceLabel: "deterministic-check",
       severity: "moderate",
@@ -174,20 +178,20 @@ export const expectedFindingManifest = {
       selector: "[data-barrier-id='AP-002']",
       wcagRefs: ["1.3.5"],
       observation:
-        "The phone input has a useful label and input type but no autocomplete attribute.",
-      diagnosis: "The telephone input omits autocomplete=\"tel\".",
-      reproduction: ["Inspect the Phone number input on the applicant profile step."],
+        "The phone field has a clear label, but it does not tell the browser that saved phone details can be used.",
+      diagnosis: "The input is missing autocomplete=\"tel\".",
+      reproduction: ["Open applicant details and inspect the Phone number field."],
       remediationGuidance:
-        "Add the appropriate telephone autocomplete token without changing the field label.",
+        "Add autocomplete=\"tel\" to the Phone number field so browsers and assistive tools can identify its purpose.",
       evidenceIds: [],
       manualReview: [],
-      expectedChecks: ["autocomplete attribute absent"],
+      expectedChecks: ["No saved-phone autocomplete value"],
       selectedDemoRepair: false,
     },
     {
       id: "AP-003",
-      title: "Assistance choices lack a programmatic group label",
-      affectedAction: "Understand assistance type choices",
+      title: "Screen reader users may not hear what the assistance choices are for",
+      affectedAction: "Choose a type of assistance",
       source: "task-runner",
       evidenceLabel: "deterministic-check",
       severity: "serious",
@@ -198,26 +202,29 @@ export const expectedFindingManifest = {
       selector: "[data-barrier-id='AP-003']",
       wcagRefs: ["1.3.1", "3.3.2"],
       observation:
-        "Each checkbox has a label, but the related controls are not contained in a labeled group.",
+        "Each checkbox has a name, but the choices are not announced as one related group.",
       diagnosis:
-        "The related checkboxes are presented in an unlabeled div instead of a fieldset and legend.",
+        "The checkboxes are inside a plain container with no group name.",
       reproduction: [
-        "Navigate to assistance details with a screen reader.",
-        "Move between the assistance checkboxes and listen for group context.",
+        "Open the assistance details with a screen reader.",
+        "Move into the checkboxes and listen for a name that explains the group.",
       ],
       remediationGuidance:
-        "Wrap the related choices in a fieldset with a concise legend.",
+        "Put the related checkboxes in a fieldset and use a short legend that explains what the choices are for.",
       evidenceIds: [],
       manualReview: [
-        "Confirm the group name is announced when entering the checkbox set.",
+        "Confirm a screen reader announces the group name when focus enters the checkbox set.",
       ],
-      expectedChecks: ["No fieldset and legend", "No role=group with accessible name"],
+      expectedChecks: [
+        "No fieldset and legend",
+        "No named group for the related choices",
+      ],
       selectedDemoRepair: false,
     },
     {
       id: "AP-004",
-      title: "Review error summary does not support efficient recovery",
-      affectedAction: "Recover from invalid review data",
+      title: "The error message does not help users reach the problem",
+      affectedAction: "Fix an incomplete application",
       source: "task-runner",
       evidenceLabel: "observed",
       severity: "serious",
@@ -228,26 +235,29 @@ export const expectedFindingManifest = {
       selector: "[data-barrier-id='AP-004']",
       wcagRefs: ["2.4.3", "3.3.1", "3.3.3"],
       observation:
-        "The error summary is displayed without moving focus and contains no link to the invalid field.",
+        "After submission failed, focus stayed on the Submit button and the error summary did not link to the unchecked confirmation.",
       diagnosis:
-        "The submit handler reveals static summary text but leaves focus on the submit button.",
+        "The submit handler reveals static summary text without moving focus or linking to the invalid field.",
       reproduction: [
-        "Leave the fictional-data confirmation unchecked.",
-        "Activate Submit test application.",
+        "Leave the application confirmation unchecked.",
+        "Activate Submit application.",
       ],
       remediationGuidance:
-        "Focus the summary and link its error item to the invalid confirmation control.",
+        "Move focus to the error summary and link its message to the confirmation that needs attention.",
       evidenceIds: [],
       manualReview: [
-        "Confirm focus order remains logical after following the summary link.",
+        "Submit the incomplete form with a keyboard and confirm the error summary is announced and leads to the unchecked confirmation.",
       ],
-      expectedChecks: ["Focus remains on submit button", "Summary has no field link"],
+      expectedChecks: [
+        "Focus stays on the Submit button",
+        "Error summary has no link to the problem",
+      ],
       selectedDemoRepair: false,
     },
     {
       id: "AP-005",
-      title: "Submission confirmation is not announced as a status",
-      affectedAction: "Know the test application was submitted",
+      title: "Screen reader users may miss the submission confirmation",
+      affectedAction: "Confirm the application was submitted",
       source: "task-runner",
       evidenceLabel: "manual-review-required",
       severity: "serious",
@@ -258,20 +268,20 @@ export const expectedFindingManifest = {
       selector: "[data-barrier-id='AP-005']",
       wcagRefs: ["4.1.3"],
       observation:
-        "The confirmation appears visually but is not exposed through a status or live region.",
+        "The confirmation appeared on screen, but a screen reader was not automatically told that it appeared.",
       diagnosis:
-        "The newly revealed confirmation section has no status role or live-region semantics.",
+        "The newly revealed confirmation has no status role or live-region setting.",
       reproduction: [
-        "Complete the fictional application with a screen reader.",
+        "Complete the application with a screen reader.",
         "Submit and wait without manually navigating to the confirmation.",
       ],
       remediationGuidance:
-        "Expose the confirmation through an appropriate status or live region.",
+        "Mark the confirmation as an appropriate status or live region so assistive technology announces it.",
       evidenceIds: [],
       manualReview: [
         "Confirm the completed submission is announced without moving focus.",
       ],
-      expectedChecks: ["No role=status", "No aria-live"],
+      expectedChecks: ["No status role", "No live-region setting"],
       selectedDemoRepair: false,
     },
   ],

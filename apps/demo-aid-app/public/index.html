@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Fictional emergency financial assistance application used for accessibility testing."
+      content="Emergency financial assistance application."
     />
-    <title>Emergency Support Application - Test Service</title>
+    <title>Emergency Support Application</title>
     <link rel="stylesheet" href="/styles.css" />
     <script src="/app.js" defer></script>
   </head>
@@ -16,17 +16,12 @@
 
     <header class="service-header">
       <div class="service-header__inner">
-        <a class="service-name" href="/" aria-label="Emergency Support test service home">
+        <a class="service-name" href="/" aria-label="Emergency Support home">
           Emergency Support
         </a>
-        <span class="service-badge">Test service</span>
+        <span class="service-badge">Application portal</span>
       </div>
     </header>
-
-    <aside class="notice" aria-label="Demonstration notice">
-      <strong>Demonstration only.</strong>
-      Use fictional information. Nothing is sent to a real agency.
-    </aside>
 
     <div class="application-layout">
       <nav class="progress" aria-label="Application progress">
@@ -47,8 +42,8 @@
           <p class="eyebrow">Step 1 of 5</p>
           <h1 tabindex="-1">Check eligibility</h1>
           <p class="lede">
-            This test program helps households facing an urgent, short-term
-            essential expense.
+            This program helps households facing an urgent, short-term essential
+            expense.
           </p>
 
           <div class="question">
@@ -71,7 +66,7 @@
                 <span class="eligibility-option__marker" aria-hidden="true"></span>
                 <span>
                   <strong>Yes, my household needs help</strong>
-                  <small>Continue to the fictional application.</small>
+                  <small>Continue to the application.</small>
                 </span>
               </div>
               <div
@@ -82,7 +77,7 @@
                 <span class="eligibility-option__marker" aria-hidden="true"></span>
                 <span>
                   <strong>I am not sure</strong>
-                  <small>You can still continue for this demonstration.</small>
+                  <small>You can still continue and review available support.</small>
                 </span>
               </div>
             </div>
@@ -98,9 +93,7 @@
         <section class="step-panel" data-step="2" hidden>
           <p class="eyebrow">Step 2 of 5</p>
           <h1 tabindex="-1">Create applicant profile</h1>
-          <p class="lede">
-            Enter the fictional contact details provided for this test.
-          </p>
+          <p class="lede">Enter your contact details.</p>
 
           <form data-form="profile">
             <div class="field">
@@ -117,7 +110,9 @@
 
             <div class="field">
               <label for="phone">Phone number</label>
-              <p class="hint" id="phone-hint">Use the fictional number shown.</p>
+              <p class="hint" id="phone-hint">
+                Enter a phone number where you can be reached.
+              </p>
               <input
                 id="phone"
                 name="phone"
@@ -142,7 +137,7 @@
         <section class="step-panel" data-step="3" hidden>
           <p class="eyebrow">Step 3 of 5</p>
           <h1 tabindex="-1">Enter assistance details</h1>
-          <p class="lede">Select at least one fictional essential need.</p>
+          <p class="lede">Select at least one essential need.</p>
 
           <form data-form="assistance">
             <p class="question__label">What do you need help with?</p>
@@ -189,10 +184,9 @@
 
         <section class="step-panel" data-step="4" hidden>
           <p class="eyebrow">Step 4 of 5</p>
-          <h1 tabindex="-1">Review your test application</h1>
+          <h1 tabindex="-1">Review your application</h1>
           <p class="lede">
-            Check the fictional information before submitting it to this local
-            demonstration.
+            Check the information below before submitting your application.
           </p>
 
           <div
@@ -202,7 +196,7 @@
             hidden
           >
             <h2>There is a problem</h2>
-            <p>Confirm that this application contains fictional test information.</p>
+            <p>Confirm that the application information is accurate.</p>
           </div>
 
           <dl class="review-list">
@@ -229,18 +223,18 @@
               <label>
                 <input
                   type="checkbox"
-                  name="fictionalDataConfirmed"
+                  name="applicationAccuracyConfirmed"
                   aria-describedby="confirmation-help confirmation-error"
                 />
                 <span>
-                  I confirm this application contains fictional test information only
+                  I confirm the information in this application is accurate
                 </span>
               </label>
               <p class="hint" id="confirmation-help">
-                This service does not contact an agency or provide financial assistance.
+                Review your details before submitting.
               </p>
               <p class="field-error" id="confirmation-error" hidden>
-                Confirm that all information is fictional before submitting.
+                Confirm that the information is accurate before submitting.
               </p>
             </div>
 
@@ -248,7 +242,7 @@
               <button class="button-secondary" type="button" data-action="back">
                 Back
               </button>
-              <button type="submit">Submit test application</button>
+              <button type="submit">Submit application</button>
             </div>
           </form>
         </section>
@@ -262,17 +256,17 @@
         >
           <div class="confirmation__check" aria-hidden="true">OK</div>
           <p class="eyebrow">Step 5 of 5</p>
-          <h1>Test application submitted</h1>
+          <h1>Application submitted</h1>
           <p class="lede">
-            Your fictional application was stored in this process memory only.
-            It was not sent to a real agency.
+            Your application has been submitted. Keep the reference number
+            below for your records.
           </p>
           <div class="reference">
-            <span>Test reference</span>
-            <strong data-submission-reference>TEST-0001</strong>
+            <span>Application reference</span>
+            <strong data-submission-reference>APP-0001</strong>
           </div>
           <button class="button-secondary" type="button" data-action="start-over">
-            Start another test application
+            Start another application
           </button>
         </section>
       </main>
@@ -280,19 +274,19 @@
       <aside class="help-panel" aria-labelledby="help-title">
         <h2 id="help-title">Need immediate help?</h2>
         <p>
-          This is not a real assistance service. In an emergency, contact an
-          appropriate local service directly.
+          For urgent or immediate needs, contact an appropriate local service
+          directly.
         </p>
         <hr />
         <p class="help-panel__meta">
-          No account is created. Test submissions are cleared when the fixture
-          resets or stops.
+          No account is required. Application details are cleared when the
+          service resets.
         </p>
       </aside>
     </div>
 
     <footer>
-      <p>Fictional service for AccessPath accessibility testing.</p>
+      <p>Emergency Support application service.</p>
     </footer>
   </body>
 </html>

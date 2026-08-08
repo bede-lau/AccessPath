@@ -18,6 +18,14 @@ async function hasCredentialFile(path: string): Promise<boolean> {
   }
 }
 
+async function hasOpaqueCredentialFile(path: string): Promise<boolean> {
+  try {
+    return (await readFile(path, "utf8")).trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function qoderAuthAvailability(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<{
@@ -35,9 +43,9 @@ export async function qoderAuthAvailability(
   const configDirectory =
     environment.QODER_CONFIG_DIR ??
     join(environment.QODER_CLI_HOME ?? homedir(), ".qoder");
-  const localAuthentication = await hasCredentialFile(
-    join(configDirectory, "oauth_creds.json"),
-  );
+  const localAuthentication =
+    (await hasCredentialFile(join(configDirectory, "oauth_creds.json"))) ||
+    (await hasOpaqueCredentialFile(join(configDirectory, ".auth", "user")));
   return {
     available: localAuthentication,
     ...(localAuthentication ? { strategy: "qodercli" as const } : {}),

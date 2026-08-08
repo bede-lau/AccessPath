@@ -255,6 +255,10 @@ export class AuditService {
     return this.readSessionFrom(await this.existingLayout(auditId));
   }
 
+  public async mapTarget(input: unknown): Promise<TaskContract> {
+    return taskFromCreateInput(input);
+  }
+
   public async create(input: unknown): Promise<AuditSession> {
     const task = await taskFromCreateInput(input);
     const auditId = `audit-${randomUUID()}`;
@@ -618,6 +622,23 @@ export class AuditService {
         active.resumeWaiters.clear();
       },
     );
+  }
+
+  public async recover(auditId: string): Promise<AuditSession> {
+    const session = await this.get(auditId);
+    if (this.activeRuns.has(auditId)) {
+      return session;
+    }
+    if (session.state === "ready") {
+      return this.start(auditId, `recover:${auditId}:start`);
+    }
+    if (session.state === "paused") {
+      return this.resume(auditId, `recover:${auditId}:resume`);
+    }
+    if (session.state === "running") {
+      this.launch(auditId, session.task);
+    }
+    return this.get(auditId);
   }
 
   public cancel(

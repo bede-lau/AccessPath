@@ -11,6 +11,12 @@ export type {
   Clock,
   DnsResolver,
   IdFactory,
+  ReconnaissanceControl,
+  ReconnaissanceHeading,
+  ReconnaissanceLandmark,
+  ReconnaissanceLink,
+  ReconnaissanceOptions,
+  ReconnaissanceResult,
   TargetValidation,
 } from "./types";
 export {
@@ -27,3 +33,4 @@ export {
 export { normalizeFindings } from "./findings";
 export { redactSummary } from "./redaction";
 export { runAudit } from "./runner";
+export { runReconnaissance } from "./reconnaissance";

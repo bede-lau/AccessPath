@@ -11,14 +11,17 @@
     "node": "^20.19.0 || ^22.13.0 || >=24.0.0"
   },
   "scripts": {
-    "dev": "node scripts/dev.mjs",
+    "dev": "node --env-file-if-exists=.env scripts/dev.mjs",
     "lint": "node scripts/lint.mjs",
     "typecheck": "node scripts/typecheck.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test --config apps/console/playwright.config.ts",
     "test:security": "vitest run --config vitest.security.config.ts",
     "test:a11y": "playwright test --config apps/console/playwright.config.ts --grep @a11y",
-    "test:qoder:live": "node --import tsx scripts/qoder-live-smoke.ts",
+    "test:agent:live": "node --env-file-if-exists=.env --import tsx scripts/qoder-live-smoke.ts",
+    "test:qoder:live": "node --env-file-if-exists=.env --import tsx scripts/qoder-live-smoke.ts --provider qoder",
+    "sandbox:build": "docker build --file docker/sandbox/Dockerfile --tag accesspath-sandbox:local .",
+    "workspace:reset": "node --import tsx scripts/demo-reset.ts",
     "demo:reset": "node --import tsx scripts/demo-reset.ts",
     "demo:verify": "node --import tsx scripts/demo-verify.ts"
   },

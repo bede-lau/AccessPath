@@ -100,6 +100,57 @@ export type AuditEngineOptions = {
   };
 };
 
+export type ReconnaissanceControl = {
+  tag: string;
+  role?: string;
+  name?: string;
+  label?: string;
+  type?: string;
+  required: boolean;
+  disabled: boolean;
+};
+
+export type ReconnaissanceHeading = {
+  level: number;
+  text: string;
+};
+
+export type ReconnaissanceLandmark = {
+  role: string;
+  name?: string;
+};
+
+export type ReconnaissanceLink = {
+  name: string;
+  href: string;
+};
+
+export type ReconnaissanceResult = {
+  startUrl: string;
+  finalUrl: string;
+  targetPolicy: "public" | "local-explicit";
+  title: string;
+  lang?: string;
+  headings: ReconnaissanceHeading[];
+  landmarks: ReconnaissanceLandmark[];
+  controls: ReconnaissanceControl[];
+  links: ReconnaissanceLink[];
+  formCount: number;
+  unnamedInteractiveCount: number;
+  completionCandidates: string[];
+  consoleMessages: string[];
+  failedRequests: string[];
+};
+
+export type ReconnaissanceOptions = {
+  signal?: AbortSignal;
+  dnsResolver?: DnsResolver;
+  chromium?: BrowserType;
+  maxRedirects?: number;
+  maxResponseBytes?: number;
+  navigationTimeoutMs?: number;
+};
+
 export type BrowserObservation = {
   stepId: string;
   url: string;
