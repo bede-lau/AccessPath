@@ -1,4 +1,21 @@
-# AccessPath
+<h1 align="center">AccessPath</h1>
+<p align="center"><b>Turn a critical web journey into evidence, a scoped repair and a verified proof thread.</b></p>
+
+## ▍At a glance
+
+```mermaid
+flowchart LR
+ A["Staging URL + source<br/>+ mission"] --> B["Frozen browser plan"]
+ B --> C["Observed evidence"]
+ C --> D["Diagnosis"]
+ D --> E["Authorized scoped repair"]
+ E --> F["Docker-isolated checks<br/>+ Chromium replay"]
+ F --> G["Human patch acceptance<br/>and durable report"]
+```
+
+The host owns browser actions, permissions and verification. Missing replay evidence leaves a mission report-only.
+
+---
 
 AccessPath is an autonomous critical-journey QA workspace for web applications,
 with accessibility as its flagship specialist. A mission connects a staging
