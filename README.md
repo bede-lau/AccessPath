@@ -1,6 +1,16 @@
 <h1 align="center">AccessPath</h1>
 <p align="center"><b>Turn a critical web journey into evidence, a scoped repair and a verified proof thread.</b></p>
 
+## ▍Project gallery
+
+<table><tr>
+<td width="50%"><img src="https://raw.githubusercontent.com/bede-lau/bede-lau.github.io/main/assets/img/accesspath/accesspath_1.png" alt="AccessPath project screenshot, first view" /></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/bede-lau/bede-lau.github.io/main/assets/img/accesspath/accesspath_2.png" alt="AccessPath project screenshot, second view" /></td>
+</tr></table>
+
+<sub>Images from the [project portfolio](https://bede-lau.github.io/); they may depict an earlier build.</sub>
+
+
 ## ▍At a glance
 
 ```mermaid
