@@ -92,6 +92,16 @@ Repair commands run in a digest-pinned `accesspath-sandbox:local` image. The con
 
 `Merge verified patch` records acceptance and sets `integration` to `demo-merged`. It does not push, and it does not modify the base checkout.
 
+## ▍Project gallery
+
+<table><tr>
+<td width="50%"><img src="https://raw.githubusercontent.com/bede-lau/bede-lau.github.io/main/assets/img/accesspath/accesspath_1.png" alt="AccessPath project screenshot, first view" /></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/bede-lau/bede-lau.github.io/main/assets/img/accesspath/accesspath_2.png" alt="AccessPath project screenshot, second view" /></td>
+</tr></table>
+
+<sub>Images from the [project portfolio](https://bede-lau.github.io/); they may depict an earlier build.</sub>
+
+
 ## ▍The demo
 
 `npm run dev` starts three loopback processes: the console, the companion, and a fictional emergency-aid application. The fixture task is a five-step application: eligibility, profile, assistance details, review, submit. Five findings are seeded in `apps/demo-aid-app/src/fixture-data.ts`. **AP-001** is the selected demo repair. **AP-002** through **AP-005** stay open in that manifest.
