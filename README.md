@@ -1,6 +1,13 @@
 <h1 align="center">AccessPath</h1>
 <p align="center"><b>Turn a critical web journey into evidence, a scoped repair and a verified proof thread.</b></p>
 
+<p align="center">
+  <img alt="React" src="https://img.shields.io/badge/React-087ea4?style=flat-square" />
+  <img alt="Playwright" src="https://img.shields.io/badge/Playwright-2e7d32?style=flat-square" />
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-176f9f?style=flat-square" />
+  <img alt="Qoder" src="https://img.shields.io/badge/Qoder-444444?style=flat-square" />
+</p>
+
 ## ▍Project gallery
 
 <table><tr>
