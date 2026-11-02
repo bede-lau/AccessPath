@@ -32,6 +32,36 @@ with accessibility as its flagship specialist. A mission connects a staging
 URL, a source snapshot, and a plain-English objective into one continuous Proof
 Thread: observed behavior, scoped repair, and verified evidence.
 
+## ▍Proof thread and trust boundaries
+
+A mission keeps the objective and source snapshot attached to what the browser actually observed. The host compiles a plan, records evidence, constrains any repair to authorized paths, and checks the result in a separate workspace.
+
+| Stage | Evidence or authority |
+| --- | --- |
+| **Freeze** | Staging target, source snapshot, objective, viewport and success conditions establish the mission context. |
+| **Observe** | Playwright, accessibility, console and network artifacts are recorded as observations; agent interpretations remain separate. |
+| **Diagnose and repair** | Qoder diagnosis is read-only; editing is limited to explicitly approved paths and operations. |
+| **Replay** | Authorized commands run in a digest-pinned Docker image without runtime network. A command exit code alone does not establish reproduction: replay must persist a valid audit bundle. |
+| **Accept** | The reviewer inspects the source patch and evidence before acceptance. Missing replay evidence leaves the outcome report-only. |
+
+### Repository map
+
+| Path | Role |
+| --- | --- |
+| [`apps/console`](apps/console) | Mission workspace and browser-facing interface |
+| [`apps/companion`](apps/companion) | Local companion and orchestration |
+| [`packages/contracts`](packages/contracts) | Shared contracts |
+| [`packages/audit-engine`](packages/audit-engine) | Audit execution |
+| [`packages/evidence`](packages/evidence) | Evidence records |
+| [`packages/git-workspace`](packages/git-workspace) | Source workspace boundary |
+| [`packages/qoder-runner`](packages/qoder-runner) | Qoder integration |
+| [`docker/`](docker/) | Sandbox image and related configuration |
+
+The accessibility target is a design goal; the documentation does not claim legal compliance or production certification.
+
+---
+
+
 ## Prerequisites
 
 - Node.js 20.19+ (see `.nvmrc`)
